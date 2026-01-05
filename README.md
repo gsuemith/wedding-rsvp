@@ -43,51 +43,51 @@ The database tables will be automatically created on application startup.
 - `GET /docs` - Interactive API documentation (Swagger UI)
 - `GET /redoc` - Alternative API documentation (ReDoc)
 
-## Deployment to Netlify Functions
+## Deployment to Vercel
 
-This application can be deployed to Netlify Functions using Mangum as an ASGI adapter.
+This application can be deployed to Vercel serverless functions using Mangum as an ASGI adapter.
 
 ### Prerequisites
 
-1. A Netlify account
+1. A Vercel account
 2. PostgreSQL database (can use services like Supabase, Neon, or Railway)
-3. Netlify CLI installed (optional, for local testing)
+3. Vercel CLI installed (optional, for local testing)
 
 ### Deployment Steps
 
-1. **Set up environment variables in Netlify:**
-   - Go to your Netlify site settings
-   - Navigate to "Environment variables"
+1. **Set up environment variables in Vercel:**
+   - Go to your Vercel project settings
+   - Navigate to "Environment Variables"
    - Add `DATABASE_URL` with your PostgreSQL connection string
 
 2. **Deploy via Git:**
-   - Connect your repository to Netlify
-   - Netlify will automatically detect the `netlify.toml` configuration
+   - Connect your repository to Vercel
+   - Vercel will automatically detect the `vercel.json` configuration
    - The build will install dependencies and set up the function
 
 3. **Or deploy via CLI:**
    ```bash
-   npm install -g netlify-cli
-   netlify login
-   netlify deploy --prod
+   npm install -g vercel
+   vercel login
+   vercel --prod
    ```
 
 ### Important Notes for Serverless Deployment
 
 - **Database Connections**: In serverless environments, consider using connection pooling (e.g., PgBouncer) or a serverless-friendly database service
 - **Cold Starts**: First request may be slower due to function initialization
-- **Function Timeout**: Netlify Functions have a 10-second timeout on the free tier, 26 seconds on paid plans
-- **API Routes**: All routes will be available under `/.netlify/functions/api/` or via the redirect at `/api/*`
+- **Function Timeout**: Vercel Functions have a 10-second timeout on the free tier (Hobby), 60 seconds on Pro plan
+- **API Routes**: All routes will be available at the root of your Vercel deployment URL
 
-### Local Testing with Netlify Functions
+### Local Testing with Vercel
 
 ```bash
-# Install Netlify CLI
-npm install -g netlify-cli
+# Install Vercel CLI
+npm install -g vercel
 
 # Run locally
-netlify dev
+vercel dev
 ```
 
-The API will be available at `http://localhost:8888/.netlify/functions/api/`
+The API will be available at `http://localhost:3000/`
 

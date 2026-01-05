@@ -1,18 +1,18 @@
 """
-Netlify Functions handler for FastAPI application
+Vercel serverless function handler for FastAPI application
 """
 import sys
 import os
 
 # Add project root to path so we can import our modules
-project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 from mangum import Mangum
 from src.main import app
 
-# Create the handler
+# Create the handler for Vercel
 # Note: In serverless environments, database connections should use connection pooling
 # The startup event will run on first invocation
 handler = Mangum(app)
