@@ -106,6 +106,7 @@ class MailingAddressDB(Base):
     postal_code = Column(String, nullable=False)
     email = Column(String, nullable=True)
     phone_number = Column(String, nullable=True)
+    password_hash = Column(String, nullable=True)  # Hashed password for RSVP updates
 
     invitees = relationship("WeddingInviteeDB", back_populates="mailing_address_ref")
 

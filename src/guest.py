@@ -4,7 +4,6 @@ from typing import List, Optional
 from uuid import UUID
 from datetime import datetime
 from sqlalchemy.orm import Session
-import re
 
 from .main import (
     SessionLocal,
@@ -15,13 +14,7 @@ from .main import (
     MailingAddress,
     WeddingInvitee,
 )
-
-
-def sanitize_phone_number(phone: Optional[str]) -> Optional[str]:
-    """Remove all non-digit characters from phone number."""
-    if phone is None:
-        return None
-    return re.sub(r'\D', '', phone)
+from .utils import sanitize_phone_number, hash_password, verify_password
 
 
 # Request/Response Models
@@ -33,6 +26,7 @@ class MailingAddressInput(BaseModel):
     postal_code: str
     email: Optional[str] = None
     phone_number: Optional[str] = None
+    password: Optional[str] = None  # Password for RSVP updates
 
 
 class GuestRequest(BaseModel):
@@ -56,6 +50,25 @@ class GuestDetailResponse(BaseModel):
     full_name: str
     mailing_address: MailingAddress
     events: List[EventWithGuests]
+
+
+class GuestRSVPInfoRequest(BaseModel):
+    email: str
+    phone_number: str
+    password: str
+    event_id: UUID
+
+
+class EventRSVPInfo(BaseModel):
+    id: UUID
+    name: str
+    date: datetime
+    guests: List[WeddingInvitee]  # All guests with same address attending this event
+
+
+class GuestRSVPInfoResponse(BaseModel):
+    mailing_address: MailingAddress
+    event: EventRSVPInfo
 
 
 # Database dependency
@@ -97,6 +110,10 @@ async def create_guests(event_id: UUID, request: GuestRequest, db: Session = Dep
         )
     
     # Create mailing address
+    password_hash = None
+    if request.mailing_address.password:
+        password_hash = hash_password(request.mailing_address.password)
+    
     mailing_address_db = MailingAddressDB(
         address_line_1=request.mailing_address.address_line_1,
         address_line_2=request.mailing_address.address_line_2,
@@ -105,6 +122,7 @@ async def create_guests(event_id: UUID, request: GuestRequest, db: Session = Dep
         postal_code=request.mailing_address.postal_code,
         email=request.mailing_address.email,
         phone_number=sanitize_phone_number(request.mailing_address.phone_number),
+        password_hash=password_hash,
     )
     db.add(mailing_address_db)
     db.flush()  # Flush to get the ID without committing
@@ -224,5 +242,93 @@ async def get_guest(guest_id: UUID, db: Session = Depends(get_db)):
         full_name=invitee.full_name,
         mailing_address=mailing_address_response,
         events=events_with_guests,
+    )
+
+
+@router.post("/guest/rsvp-info", response_model=GuestRSVPInfoResponse)
+async def get_guest_rsvp_info(request: GuestRSVPInfoRequest, db: Session = Depends(get_db)):
+    """
+    Get RSVP information for guests using email, phone number, password, and event ID.
+    Returns mailing address and RSVP information for all guests at that address for the specified event.
+    """
+    # Verify event exists
+    event = db.query(EventDB).filter(EventDB.id == request.event_id).first()
+    if not event:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Event with id {request.event_id} not found"
+        )
+    
+    # Sanitize phone number
+    sanitized_phone = sanitize_phone_number(request.phone_number)
+    
+    # Find mailing address by email and phone number
+    mailing_address = db.query(MailingAddressDB).filter(
+        MailingAddressDB.email == request.email,
+        MailingAddressDB.phone_number == sanitized_phone
+    ).first()
+    
+    if not mailing_address:
+        raise HTTPException(
+            status_code=404,
+            detail="No mailing address found with the provided email and phone number"
+        )
+    
+    # Verify password
+    if not mailing_address.password_hash:
+        raise HTTPException(
+            status_code=400,
+            detail="No password set for this mailing address. Please contact support."
+        )
+    
+    if not verify_password(request.password, mailing_address.password_hash):
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid password"
+        )
+    
+    # Get all invitees at this address who are associated with the event
+    event_invitee_ids = {invitee.id for invitee in event.invitees}
+    address_invitees = [invitee for invitee in mailing_address.invitees if invitee.id in event_invitee_ids]
+    
+    if not address_invitees:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No guests found at this address for event {request.event_id}"
+        )
+    
+    # Build mailing address response
+    mailing_address_response = MailingAddress(
+        id=mailing_address.id,
+        address_line_1=mailing_address.address_line_1,
+        address_line_2=mailing_address.address_line_2,
+        city=mailing_address.city,
+        state=mailing_address.state,
+        postal_code=mailing_address.postal_code,
+        email=mailing_address.email,
+        phone_number=mailing_address.phone_number,
+    )
+    
+    # Convert invitees to response models
+    guests_response = [
+        WeddingInvitee(
+            full_name=inv.full_name,
+            mailing_address=inv.mailing_address_id,
+            rsvp_response=inv.rsvp_response,
+        )
+        for inv in address_invitees
+    ]
+    
+    # Build event RSVP info
+    event_rsvp_info = EventRSVPInfo(
+        id=event.id,
+        name=event.name,
+        date=event.date,
+        guests=guests_response,
+    )
+    
+    return GuestRSVPInfoResponse(
+        mailing_address=mailing_address_response,
+        event=event_rsvp_info,
     )
 
