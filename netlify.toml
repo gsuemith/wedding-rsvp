@@ -1,9 +1,9 @@
 [build]
-  command = "echo 'No build step required'"
+  command = "echo 'No build step required for Python functions'"
   functions = "netlify/functions"
 
 [functions]
-  node_bundler = "esbuild"
+  included_files = ["src/**", "requirements.txt"]
 
 [[redirects]]
   from = "/api/*"
