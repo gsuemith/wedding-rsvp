@@ -115,7 +115,13 @@ async def startup_event():
     # Initialize database tables
     # Note: In serverless environments, this runs on first invocation
     # Consider using connection pooling for production
-    init_db()
+    try:
+        init_db()
+    except Exception as e:
+        # Log error but don't crash the app - tables might already exist
+        # or database connection might fail in serverless environment
+        import logging
+        logging.warning(f"Database initialization warning: {str(e)}")
 
 
 @app.get("/")
