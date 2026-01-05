@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from .main import (
     SessionLocal,
     EventDB,
+    MailingAddressDB,
     WeddingInviteeDB,
     RSVPResponse,
     WeddingInvitee,
@@ -23,6 +24,12 @@ class Event(BaseModel):
     part_of: Optional[UUID] = None  # UUID of parent event if this is part of a larger event
 
 
+class EventCreateRequest(BaseModel):
+    name: str
+    date: datetime
+    part_of: Optional[UUID] = None  # UUID of parent event if this is part of a larger event
+
+
 # Database dependency
 def get_db():
     db = SessionLocal()
@@ -33,6 +40,52 @@ def get_db():
 
 
 router = APIRouter()
+
+
+@router.post("/event", response_model=Event)
+async def create_event(
+    request: EventCreateRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    Create a new event with name and date.
+    Initializes empty lists for guest_list and invitees.
+    """
+    # Verify parent event exists if part_of is provided
+    if request.part_of:
+        parent_event = db.query(EventDB).filter(EventDB.id == request.part_of).first()
+        if not parent_event:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Parent event with id {request.part_of} not found"
+            )
+    
+    # Create the event
+    event_db = EventDB(
+        name=request.name,
+        date=request.date,
+        part_of=request.part_of,
+    )
+    db.add(event_db)
+    db.commit()
+    db.refresh(event_db)
+    
+    # Build response with empty lists for guest_list and invitees
+    # guest_list would be computed from invitees' mailing addresses
+    # For now, return empty list
+    guest_list = []
+    
+    # Get invitee IDs (will be empty initially)
+    invitee_ids = []
+    
+    return Event(
+        id=event_db.id,
+        name=event_db.name,
+        guest_list=guest_list,
+        date=event_db.date,
+        invitees=invitee_ids,
+        part_of=event_db.part_of,
+    )
 
 
 @router.get("/event/{event_id}/guests", response_model=List[WeddingInvitee])
