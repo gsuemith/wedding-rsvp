@@ -4,6 +4,7 @@ from typing import List, Optional
 from uuid import UUID
 from datetime import datetime
 from sqlalchemy.orm import Session
+import re
 
 from .main import (
     SessionLocal,
@@ -16,6 +17,13 @@ from .main import (
 )
 
 
+def sanitize_phone_number(phone: Optional[str]) -> Optional[str]:
+    """Remove all non-digit characters from phone number."""
+    if phone is None:
+        return None
+    return re.sub(r'\D', '', phone)
+
+
 # Request/Response Models
 class MailingAddressInput(BaseModel):
     address_line_1: str
@@ -23,6 +31,8 @@ class MailingAddressInput(BaseModel):
     city: str
     state: str
     postal_code: str
+    email: Optional[str] = None
+    phone_number: Optional[str] = None
 
 
 class GuestRequest(BaseModel):
@@ -93,6 +103,8 @@ async def create_guests(event_id: UUID, request: GuestRequest, db: Session = Dep
         city=request.mailing_address.city,
         state=request.mailing_address.state,
         postal_code=request.mailing_address.postal_code,
+        email=request.mailing_address.email,
+        phone_number=sanitize_phone_number(request.mailing_address.phone_number),
     )
     db.add(mailing_address_db)
     db.flush()  # Flush to get the ID without committing
@@ -130,6 +142,8 @@ async def create_guests(event_id: UUID, request: GuestRequest, db: Session = Dep
         city=mailing_address_db.city,
         state=mailing_address_db.state,
         postal_code=mailing_address_db.postal_code,
+        email=mailing_address_db.email,
+        phone_number=mailing_address_db.phone_number,
     )
 
     invitees_response = [
@@ -171,6 +185,8 @@ async def get_guest(guest_id: UUID, db: Session = Depends(get_db)):
         city=mailing_address.city,
         state=mailing_address.state,
         postal_code=mailing_address.postal_code,
+        email=mailing_address.email,
+        phone_number=mailing_address.phone_number,
     )
     
     # Get all events this invitee is attending (through the backref relationship)

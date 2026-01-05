@@ -84,6 +84,8 @@ class MailingAddress(BaseModel):
     city: str
     state: str
     postal_code: str
+    email: Optional[str] = None
+    phone_number: Optional[str] = None
 
 
 class WeddingInvitee(BaseModel):
@@ -102,6 +104,8 @@ class MailingAddressDB(Base):
     city = Column(String, nullable=False)
     state = Column(String, nullable=False)
     postal_code = Column(String, nullable=False)
+    email = Column(String, nullable=True)
+    phone_number = Column(String, nullable=True)
 
     invitees = relationship("WeddingInviteeDB", back_populates="mailing_address_ref")
 
