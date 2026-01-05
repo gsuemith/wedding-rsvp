@@ -13,12 +13,25 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Database setup
-DATABASE_URL = os.getenv(
-    "DATABASE_URL",
-    "postgresql://postgres:postgres@localhost:5432/wedding_rsvp"
-)
+DATABASE_URL = os.getenv("DATABASE_URL")
 
-engine = create_engine(DATABASE_URL)
+if not DATABASE_URL:
+    raise ValueError(
+        "DATABASE_URL environment variable is not set. "
+        "Please set it in your Vercel project settings or .env file."
+    )
+
+# Configure engine for serverless environments
+# Use connection pooling and set pool_pre_ping for better reliability
+engine = create_engine(
+    DATABASE_URL,
+    pool_pre_ping=True,  # Verify connections before using
+    pool_size=1,  # Smaller pool for serverless
+    max_overflow=0,  # No overflow for serverless
+    connect_args={
+        "connect_timeout": 10,  # 10 second timeout
+    }
+)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 

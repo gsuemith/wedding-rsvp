@@ -55,10 +55,13 @@ This application can be deployed to Vercel serverless functions using Mangum as 
 
 ### Deployment Steps
 
-1. **Set up environment variables in Vercel:**
+1. **Set up environment variables in Vercel (REQUIRED):**
    - Go to your Vercel project settings
    - Navigate to "Environment Variables"
    - Add `DATABASE_URL` with your PostgreSQL connection string
+   - **Important:** Without this, the application will fail to connect to the database
+   - Example: `postgresql://user:password@host:5432/database`
+   - You can use services like Supabase, Neon, Railway, or any PostgreSQL provider
 
 2. **Deploy via Git:**
    - Connect your repository to Vercel
