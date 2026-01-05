@@ -106,47 +106,85 @@ async def get_all_events(
 @router.post("/event", response_model=Event)
 async def create_event(
     request: EventCreateRequest,
+    id: Optional[UUID] = Query(None, description="Event ID to update. If provided, updates existing event's name and date, ignoring part_of."),
     db: Session = Depends(get_db)
 ):
     """
-    Create a new event with name and date.
-    Initializes empty lists for guest_list and invitees.
+    Create a new event with name and date, or update an existing event if id is provided.
+    Initializes empty lists for guest_list and invitees when creating.
+    If id is provided, updates the event's name and date, ignoring part_of from the payload.
     """
-    # Verify parent event exists if part_of is provided
-    if request.part_of:
-        parent_event = db.query(EventDB).filter(EventDB.id == request.part_of).first()
-        if not parent_event:
+    if id is not None:
+        # Update existing event
+        event_db = db.query(EventDB).filter(EventDB.id == id).first()
+        
+        if not event_db:
             raise HTTPException(
                 status_code=404,
-                detail=f"Parent event with id {request.part_of} not found"
+                detail=f"Event with id {id} not found"
             )
-    
-    # Create the event
-    event_db = EventDB(
-        name=request.name,
-        date=request.date,
-        part_of=request.part_of,
-    )
-    db.add(event_db)
-    db.commit()
-    db.refresh(event_db)
-    
-    # Build response with empty lists for guest_list and invitees
-    # guest_list would be computed from invitees' mailing addresses
-    # For now, return empty list
-    guest_list = []
-    
-    # Get invitee IDs (will be empty initially)
-    invitee_ids = []
-    
-    return Event(
-        id=event_db.id,
-        name=event_db.name,
-        guest_list=guest_list,
-        date=event_db.date,
-        invitees=invitee_ids,
-        part_of=event_db.part_of,
-    )
+        
+        # Update name and date, ignore part_of
+        event_db.name = request.name
+        event_db.date = request.date
+        db.commit()
+        db.refresh(event_db)
+        
+        # Get invitee IDs
+        invitee_ids = [invitee.id for invitee in event_db.invitees]
+        
+        # Get unique mailing address IDs from invitees (guest_list)
+        mailing_address_ids = list(set([
+            invitee.mailing_address_id 
+            for invitee in event_db.invitees
+            if invitee.mailing_address_id is not None
+        ]))
+        
+        return Event(
+            id=event_db.id,
+            name=event_db.name,
+            guest_list=mailing_address_ids,
+            date=event_db.date,
+            invitees=invitee_ids,
+            part_of=event_db.part_of,
+        )
+    else:
+        # Create new event
+        # Verify parent event exists if part_of is provided
+        if request.part_of:
+            parent_event = db.query(EventDB).filter(EventDB.id == request.part_of).first()
+            if not parent_event:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Parent event with id {request.part_of} not found"
+                )
+        
+        # Create the event
+        event_db = EventDB(
+            name=request.name,
+            date=request.date,
+            part_of=request.part_of,
+        )
+        db.add(event_db)
+        db.commit()
+        db.refresh(event_db)
+        
+        # Build response with empty lists for guest_list and invitees
+        # guest_list would be computed from invitees' mailing addresses
+        # For now, return empty list
+        guest_list = []
+        
+        # Get invitee IDs (will be empty initially)
+        invitee_ids = []
+        
+        return Event(
+            id=event_db.id,
+            name=event_db.name,
+            guest_list=guest_list,
+            date=event_db.date,
+            invitees=invitee_ids,
+            part_of=event_db.part_of,
+        )
 
 
 @router.delete("/event/{event_id}")
