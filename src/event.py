@@ -42,6 +42,40 @@ def get_db():
 router = APIRouter()
 
 
+@router.get("/event", response_model=List[Event])
+async def get_all_events(db: Session = Depends(get_db)):
+    """
+    Get all top-level events (events that are not part of another event) with their guest lists and invitees.
+    """
+    # Get only events that are not part of another event (part_of is None)
+    events = db.query(EventDB).filter(EventDB.part_of.is_(None)).all()
+    
+    # Build response for each event
+    events_response = []
+    for event_db in events:
+        # Get invitee IDs
+        invitee_ids = [invitee.id for invitee in event_db.invitees]
+        
+        # Get unique mailing address IDs from invitees (guest_list)
+        mailing_address_ids = list(set([
+            invitee.mailing_address_id 
+            for invitee in event_db.invitees
+        ]))
+        
+        events_response.append(
+            Event(
+                id=event_db.id,
+                name=event_db.name,
+                guest_list=mailing_address_ids,
+                date=event_db.date,
+                invitees=invitee_ids,
+                part_of=event_db.part_of,
+            )
+        )
+    
+    return events_response
+
+
 @router.post("/event", response_model=Event)
 async def create_event(
     request: EventCreateRequest,
