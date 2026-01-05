@@ -15,24 +15,59 @@ load_dotenv()
 # Database setup
 DATABASE_URL = os.getenv("DATABASE_URL")
 
-if not DATABASE_URL:
-    raise ValueError(
-        "DATABASE_URL environment variable is not set. "
-        "Please set it in your Vercel project settings or .env file."
-    )
+# Lazy initialization of database engine
+_engine = None
+_SessionLocal = None
 
-# Configure engine for serverless environments
-# Use connection pooling and set pool_pre_ping for better reliability
-engine = create_engine(
-    DATABASE_URL,
-    pool_pre_ping=True,  # Verify connections before using
-    pool_size=1,  # Smaller pool for serverless
-    max_overflow=0,  # No overflow for serverless
-    connect_args={
-        "connect_timeout": 10,  # 10 second timeout
-    }
-)
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+def get_database_engine():
+    """Get or create the database engine, with validation"""
+    global _engine, _SessionLocal
+    
+    if _engine is None:
+        if not DATABASE_URL:
+            raise ValueError(
+                "DATABASE_URL environment variable is not set. "
+                "Please set it in your Vercel project settings. "
+                "Go to: Project Settings → Environment Variables → Add DATABASE_URL"
+            )
+        
+        # Validate it's not the default localhost
+        if "localhost" in DATABASE_URL or "127.0.0.1" in DATABASE_URL:
+            raise ValueError(
+                "DATABASE_URL appears to point to localhost, which won't work on Vercel. "
+                "Please use a remote PostgreSQL database (Supabase, Neon, Railway, etc.) "
+                "and set the DATABASE_URL environment variable in Vercel."
+            )
+        
+        # Configure engine for serverless environments
+        _engine = create_engine(
+            DATABASE_URL,
+            pool_pre_ping=True,  # Verify connections before using
+            pool_size=1,  # Smaller pool for serverless
+            max_overflow=0,  # No overflow for serverless
+            connect_args={
+                "connect_timeout": 10,  # 10 second timeout
+            }
+        )
+        _SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=_engine)
+    
+    return _engine, _SessionLocal
+
+# Initialize for backward compatibility
+# Don't initialize at import time - let it fail lazily with a clear error
+engine = None
+SessionLocal = None
+
+# Try to initialize, but don't fail if DATABASE_URL is not set yet
+# This allows the app to start and show a clear error when database is accessed
+try:
+    if DATABASE_URL:
+        engine, SessionLocal = get_database_engine()
+except Exception as e:
+    import logging
+    logging.warning(f"Database not initialized: {str(e)}")
+    engine = None
+    SessionLocal = None
 Base = declarative_base()
 
 

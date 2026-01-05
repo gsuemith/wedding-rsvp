@@ -32,6 +32,18 @@ class EventCreateRequest(BaseModel):
 
 # Database dependency
 def get_db():
+    from .main import SessionLocal, get_database_engine
+    
+    # Ensure database is initialized
+    if SessionLocal is None:
+        try:
+            _, SessionLocal = get_database_engine()
+        except ValueError as e:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Database configuration error: {str(e)}"
+            )
+    
     db = SessionLocal()
     try:
         yield db
