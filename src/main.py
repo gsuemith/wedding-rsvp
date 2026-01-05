@@ -143,7 +143,9 @@ class EventDB(Base):
 
 # Create tables
 def init_db():
-    Base.metadata.create_all(bind=engine)
+    # Ensure engine is initialized before creating tables
+    db_engine, _ = get_database_engine()
+    Base.metadata.create_all(bind=db_engine)
 
 
 app = FastAPI()

@@ -6,7 +6,6 @@ from datetime import datetime
 from sqlalchemy.orm import Session
 
 from .main import (
-    SessionLocal,
     EventDB,
     MailingAddressDB,
     WeddingInviteeDB,
@@ -32,17 +31,16 @@ class EventCreateRequest(BaseModel):
 
 # Database dependency
 def get_db():
-    from .main import SessionLocal, get_database_engine
+    from .main import get_database_engine
     
     # Ensure database is initialized
-    if SessionLocal is None:
-        try:
-            _, SessionLocal = get_database_engine()
-        except ValueError as e:
-            raise HTTPException(
-                status_code=500,
-                detail=f"Database configuration error: {str(e)}"
-            )
+    try:
+        _, SessionLocal = get_database_engine()
+    except ValueError as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Database configuration error: {str(e)}"
+        )
     
     db = SessionLocal()
     try:
@@ -55,12 +53,28 @@ router = APIRouter()
 
 
 @router.get("/event", response_model=List[Event])
-async def get_all_events(db: Session = Depends(get_db)):
+async def get_all_events(
+    part_of: Optional[UUID] = Query(None, description="Filter by parent event UUID to get sub-events"),
+    db: Session = Depends(get_db)
+):
     """
-    Get all top-level events (events that are not part of another event) with their guest lists and invitees.
+    Get events with their guest lists and invitees.
+    - If part_of is not provided: returns all top-level events (events that are not part of another event)
+    - If part_of is provided: returns all sub-events of the specified parent event
     """
-    # Get only events that are not part of another event (part_of is None)
-    events = db.query(EventDB).filter(EventDB.part_of.is_(None)).all()
+    if part_of is not None:
+        # Verify parent event exists
+        parent_event = db.query(EventDB).filter(EventDB.id == part_of).first()
+        if not parent_event:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Parent event with id {part_of} not found"
+            )
+        # Get all events that are part of the specified parent event
+        events = db.query(EventDB).filter(EventDB.part_of == part_of).all()
+    else:
+        # Get only events that are not part of another event (part_of is None)
+        events = db.query(EventDB).filter(EventDB.part_of.is_(None)).all()
     
     # Build response for each event
     events_response = []
@@ -72,6 +86,7 @@ async def get_all_events(db: Session = Depends(get_db)):
         mailing_address_ids = list(set([
             invitee.mailing_address_id 
             for invitee in event_db.invitees
+            if invitee.mailing_address_id is not None
         ]))
         
         events_response.append(
@@ -132,6 +147,115 @@ async def create_event(
         invitees=invitee_ids,
         part_of=event_db.part_of,
     )
+
+
+@router.delete("/event/{event_id}")
+async def delete_event(
+    event_id: UUID,
+    delete_sub_events: bool = Query(False, description="If true, delete sub-events as well (only if no guests exist)"),
+    db: Session = Depends(get_db)
+):
+    """
+    Delete an event.
+    - By default: Cannot delete if the event has sub-events or guests (invitees).
+    - If delete_sub_events=true: Will delete the event and all sub-events, but only if none of them have guests.
+    """
+    # Find the event
+    event = db.query(EventDB).filter(EventDB.id == event_id).first()
+    
+    if not event:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Event with id {event_id} not found"
+        )
+    
+    # Get all sub-events
+    sub_events = db.query(EventDB).filter(EventDB.part_of == event_id).all()
+    
+    if delete_sub_events:
+        # Check if main event has guests
+        if event.invitees:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot delete event {event_id}: it has {len(event.invitees)} guest(s). Please remove guests first."
+            )
+        
+        # Check if any sub-events have guests
+        events_with_guests = []
+        for sub_event in sub_events:
+            if sub_event.invitees:
+                events_with_guests.append(sub_event.name)
+        
+        if events_with_guests:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot delete event {event_id} and sub-events: the following sub-events have guests: {', '.join(events_with_guests)}. Please remove guests first."
+            )
+        
+        # Delete all sub-events first
+        for sub_event in sub_events:
+            db.delete(sub_event)
+        
+        # Then delete the main event
+        db.delete(event)
+        db.commit()
+        
+        return {
+            "message": f"Event {event_id} and {len(sub_events)} sub-event(s) deleted successfully"
+        }
+    else:
+        # Original behavior: don't allow deletion if there are sub-events
+        if sub_events:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot delete event {event_id}: it has {len(sub_events)} sub-event(s). Please delete sub-events first or use delete_sub_events=true."
+            )
+        
+        # Check if there are any invitees associated with this event
+        if event.invitees:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot delete event {event_id}: it has {len(event.invitees)} guest(s). Please remove guests first."
+            )
+        
+        # Safe to delete
+        db.delete(event)
+        db.commit()
+        
+        return {"message": f"Event {event_id} deleted successfully"}
+
+
+@router.post("/event/{event_id}/clear-guests")
+async def clear_event_guests(
+    event_id: UUID,
+    db: Session = Depends(get_db)
+):
+    """
+    Remove all guests (invitees) linked to an event.
+    This removes the association between the event and invitees, but does not delete the invitees themselves.
+    """
+    # Find the event
+    event = db.query(EventDB).filter(EventDB.id == event_id).first()
+    
+    if not event:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Event with id {event_id} not found"
+        )
+    
+    # Get count of invitees before clearing
+    invitee_count = len(event.invitees)
+    
+    # Clear the association (removes entries from junction table)
+    event.invitees.clear()
+    
+    db.commit()
+    
+    return {
+        "message": f"Removed {invitee_count} guest(s) from event {event_id}",
+        "event_id": str(event_id),
+        "guests_removed": invitee_count
+    }
 
 
 @router.get("/event/{event_id}/guests", response_model=List[WeddingInvitee])
