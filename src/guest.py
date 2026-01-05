@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from typing import List, Optional
 from uuid import UUID
+from datetime import datetime
 from sqlalchemy.orm import Session
 
 from .main import (
@@ -32,6 +33,19 @@ class GuestRequest(BaseModel):
 class GuestResponse(BaseModel):
     mailing_address: MailingAddress
     invitees: List[WeddingInvitee]
+
+
+class EventWithGuests(BaseModel):
+    id: UUID
+    name: str
+    date: datetime
+    guests: List[WeddingInvitee]  # All guests with same address attending this event
+
+
+class GuestDetailResponse(BaseModel):
+    full_name: str
+    mailing_address: MailingAddress
+    events: List[EventWithGuests]
 
 
 # Database dependency
@@ -119,5 +133,69 @@ async def create_guests(event_id: UUID, request: GuestRequest, db: Session = Dep
     return GuestResponse(
         mailing_address=mailing_address_response,
         invitees=invitees_response,
+    )
+
+
+@router.get("/guest/{guest_id}", response_model=GuestDetailResponse)
+async def get_guest(guest_id: UUID, db: Session = Depends(get_db)):
+    """
+    Get guest details including their name, mailing address, and all events they're attending.
+    For each event, includes a list of all guests with the same address attending that event.
+    """
+    # Find the invitee
+    invitee = db.query(WeddingInviteeDB).filter(WeddingInviteeDB.id == guest_id).first()
+    
+    if not invitee:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Guest with id {guest_id} not found"
+        )
+    
+    # Get mailing address
+    mailing_address = invitee.mailing_address_ref
+    mailing_address_response = MailingAddress(
+        id=mailing_address.id,
+        address_line_1=mailing_address.address_line_1,
+        address_line_2=mailing_address.address_line_2,
+        city=mailing_address.city,
+        state=mailing_address.state,
+        postal_code=mailing_address.postal_code,
+    )
+    
+    # Get all events this invitee is attending (through the backref relationship)
+    events = invitee.events
+    
+    # Build events with guests list
+    events_with_guests = []
+    for event in events:
+        # Find all invitees with the same mailing address who are also in this event
+        same_address_invitees = [
+            e for e in event.invitees 
+            if e.mailing_address_id == invitee.mailing_address_id
+        ]
+        
+        # Convert to response models
+        guests_response = [
+            WeddingInvitee(
+                full_name=inv.full_name,
+                mailing_address=inv.mailing_address_id,
+                rsvp_response=inv.rsvp_response,
+            )
+            for inv in same_address_invitees
+        ]
+        
+        events_with_guests.append(
+            EventWithGuests(
+                id=event.id,
+                name=event.name,
+                date=event.date,
+                guests=guests_response,
+            )
+        )
+    
+    return GuestDetailResponse(
+        full_name=invitee.full_name,
+        mailing_address=mailing_address_response,
+        events=events_with_guests,
     )
 

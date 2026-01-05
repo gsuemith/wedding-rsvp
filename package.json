@@ -1,0 +1,9 @@
+{
+  "name": "wedding-rsvp",
+  "version": "1.0.0",
+  "description": "Wedding RSVP FastAPI application",
+  "scripts": {
+    "build": "echo 'No build step required for Python'"
+  }
+}
+

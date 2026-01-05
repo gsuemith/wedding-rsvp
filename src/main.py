@@ -112,6 +112,9 @@ app.include_router(event_router)
 
 @app.on_event("startup")
 async def startup_event():
+    # Initialize database tables
+    # Note: In serverless environments, this runs on first invocation
+    # Consider using connection pooling for production
     init_db()
 
 
