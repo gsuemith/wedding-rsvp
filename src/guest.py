@@ -147,14 +147,27 @@ async def create_guests(event_id: UUID, request: GuestRequest, db: Session = Dep
     # Flush to get invitee IDs before associating with event
     db.flush()
     
-    # Associate invitees with the event (create associations with PENDING status)
+    # Get all sub-events of the main event
+    sub_events = db.query(EventDB).filter(EventDB.part_of == event_id).all()
+    
+    # Associate invitees with the main event (rsvp_response = "yes")
     for invitee_db in invitees_db:
-        association = EventInviteeAssociation(
+        main_association = EventInviteeAssociation(
             event_id=event_id,
             invitee_id=invitee_db.id,
-            rsvp_response=RSVPResponse.PENDING,
+            rsvp_response=RSVPResponse.YES,
         )
-        db.add(association)
+        db.add(main_association)
+    
+    # Associate invitees with all sub-events (rsvp_response = "pending")
+    for sub_event in sub_events:
+        for invitee_db in invitees_db:
+            sub_association = EventInviteeAssociation(
+                event_id=sub_event.id,
+                invitee_id=invitee_db.id,
+                rsvp_response=RSVPResponse.PENDING,
+            )
+            db.add(sub_association)
 
     # Commit all changes
     db.commit()
