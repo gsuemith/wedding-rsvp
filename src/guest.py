@@ -94,7 +94,7 @@ def get_db():
 router = APIRouter()
 
 
-@router.post("/guest/{event_id}", response_model=GuestResponse)
+@router.post("/guest/event/{event_id}", response_model=GuestResponse)
 async def create_guests(event_id: UUID, request: GuestRequest, db: Session = Depends(get_db)):
     """
     Create a mailing address and wedding invitees for a list of names.
