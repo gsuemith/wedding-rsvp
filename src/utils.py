@@ -1,10 +1,10 @@
 import re
-import hashlib
 from typing import Optional
 from passlib.context import CryptContext
 
 # Password hashing context
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+# Using pbkdf2_sha256 instead of bcrypt to avoid 72-byte password limit
+pwd_context = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
 
 
 def sanitize_phone_number(phone: Optional[str]) -> Optional[str]:
@@ -16,23 +16,15 @@ def sanitize_phone_number(phone: Optional[str]) -> Optional[str]:
 
 def hash_password(password: str) -> str:
     """
-    Hash a password using bcrypt.
-    Pre-hashes with SHA-256 to handle passwords longer than 72 bytes (bcrypt limit).
+    Hash a password using pbkdf2_sha256.
+    This scheme doesn't have the 72-byte limit that bcrypt has.
     """
-    # Pre-hash with SHA-256 to ensure we never exceed bcrypt's 72-byte limit
-    # This produces a fixed 32-byte output regardless of input length
-    sha256_hash = hashlib.sha256(password.encode('utf-8')).hexdigest()
-    # Now bcrypt the SHA-256 hash (which is always 64 hex characters = 32 bytes)
-    return pwd_context.hash(sha256_hash)
+    return pwd_context.hash(password)
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     """
     Verify a password against its hash.
-    Pre-hashes with SHA-256 to match the hashing process.
     """
-    # Pre-hash with SHA-256 to match the hashing process
-    sha256_hash = hashlib.sha256(plain_password.encode('utf-8')).hexdigest()
-    # Verify the SHA-256 hash against the bcrypt hash
-    return pwd_context.verify(sha256_hash, hashed_password)
+    return pwd_context.verify(plain_password, hashed_password)
 
