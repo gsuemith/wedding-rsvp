@@ -177,6 +177,21 @@ def init_db():
                 conn.commit()
     
     # Migrate rsvp_response from wedding_invitees to event_invitee_association
+    # First, handle wedding_invitees table - make rsvp_response nullable (we no longer use it)
+    if 'wedding_invitees' in inspector.get_table_names():
+        existing_invitee_columns = [col['name'] for col in inspector.get_columns('wedding_invitees')]
+        
+        with db_engine.connect() as conn:
+            # Make rsvp_response nullable in wedding_invitees (we moved it to association table)
+            if 'rsvp_response' in existing_invitee_columns:
+                # Check if column is nullable
+                for col in inspector.get_columns('wedding_invitees'):
+                    if col['name'] == 'rsvp_response' and not col['nullable']:
+                        # Make it nullable
+                        conn.execute(text("ALTER TABLE wedding_invitees ALTER COLUMN rsvp_response DROP NOT NULL"))
+                        conn.commit()
+    
+    # Now handle event_invitee_association table
     if 'event_invitee_association' in inspector.get_table_names():
         existing_assoc_columns = [col['name'] for col in inspector.get_columns('event_invitee_association')]
         
@@ -186,14 +201,28 @@ def init_db():
                 conn.execute(text("ALTER TABLE event_invitee_association ADD COLUMN rsvp_response VARCHAR"))
                 conn.commit()
                 
-                # Migrate existing data: copy rsvp_response from wedding_invitees to associations
-                # This assumes all existing associations should have PENDING as default
-                # If wedding_invitees still has rsvp_response, we could migrate it, but for now set to PENDING
-                conn.execute(text("""
-                    UPDATE event_invitee_association 
-                    SET rsvp_response = 'pending' 
-                    WHERE rsvp_response IS NULL
-                """))
+                # Migrate existing data: copy rsvp_response from wedding_invitees to associations if possible
+                # Otherwise set to PENDING as default
+                try:
+                    # Try to migrate from wedding_invitees if the column still exists
+                    conn.execute(text("""
+                        UPDATE event_invitee_association eia
+                        SET rsvp_response = COALESCE(
+                            (SELECT wi.rsvp_response::text 
+                             FROM wedding_invitees wi 
+                             WHERE wi.id = eia.invitee_id 
+                             AND wi.rsvp_response IS NOT NULL),
+                            'pending'
+                        )
+                        WHERE eia.rsvp_response IS NULL
+                    """))
+                except Exception:
+                    # If migration fails, just set to pending
+                    conn.execute(text("""
+                        UPDATE event_invitee_association 
+                        SET rsvp_response = 'pending' 
+                        WHERE rsvp_response IS NULL
+                    """))
                 conn.commit()
                 
                 # Make rsvp_response NOT NULL after setting defaults
