@@ -32,7 +32,10 @@ class EventCreateRequest(BaseModel):
 
 # Database dependency
 def get_db():
-    from .main import get_database_engine
+    from .main import get_database_engine, ensure_migrations
+    
+    # Ensure migrations have run
+    ensure_migrations()
     
     # Ensure database is initialized
     try:

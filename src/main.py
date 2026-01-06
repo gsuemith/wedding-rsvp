@@ -184,12 +184,22 @@ def init_db():
         with db_engine.connect() as conn:
             # Make rsvp_response nullable in wedding_invitees (we moved it to association table)
             if 'rsvp_response' in existing_invitee_columns:
-                # Check if column is nullable
-                for col in inspector.get_columns('wedding_invitees'):
-                    if col['name'] == 'rsvp_response' and not col['nullable']:
-                        # Make it nullable
-                        conn.execute(text("ALTER TABLE wedding_invitees ALTER COLUMN rsvp_response DROP NOT NULL"))
-                        conn.commit()
+                # First, set a default value for any NULL values (safety measure)
+                try:
+                    conn.execute(text("UPDATE wedding_invitees SET rsvp_response = 'pending' WHERE rsvp_response IS NULL"))
+                    conn.commit()
+                except Exception:
+                    conn.rollback()
+                
+                # Always try to drop NOT NULL constraint (will fail silently if already nullable)
+                try:
+                    conn.execute(text("ALTER TABLE wedding_invitees ALTER COLUMN rsvp_response DROP NOT NULL"))
+                    conn.commit()
+                except Exception as e:
+                    # Column might already be nullable, or constraint might not exist
+                    # This is fine - just continue
+                    conn.rollback()
+                    pass
     
     # Now handle event_invitee_association table
     if 'event_invitee_association' in inspector.get_table_names():
@@ -263,6 +273,20 @@ async def startup_event():
         # or database connection might fail in serverless environment
         import logging
         logging.warning(f"Database initialization warning: {str(e)}")
+
+# Also ensure migrations run on first database access (for serverless environments)
+_migrations_run = False
+
+def ensure_migrations():
+    """Ensure database migrations have run."""
+    global _migrations_run
+    if not _migrations_run:
+        try:
+            init_db()
+            _migrations_run = True
+        except Exception as e:
+            import logging
+            logging.warning(f"Migration check warning: {str(e)}")
 
 
 @app.get("/")
