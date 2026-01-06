@@ -34,12 +34,48 @@ The database tables will be automatically created on application startup.
 
 ## Endpoints
 
+### Root Endpoints
 - `GET /` - Returns a hello world message
 - `GET /health` - Health check endpoint
-- `POST /guest/{event_id}` - Create guests for an event
+
+### Guest Endpoints
+- `POST /guest/event/{event_id}` - Create guests for an event
+  - Creates a mailing address and wedding invitees for a list of names
+  - All invitees share the same mailing address and are associated with the specified event
+  - Optional password field for RSVP updates
 - `GET /guest/{guest_id}` - Get guest details with events
+  - Returns guest name, mailing address, and all events they're attending
+  - For each event, includes all guests with the same address attending that event
+- `POST /guest/rsvp-info` - Get RSVP information for guests
+  - Requires: email, phone_number, password, and event_id
+  - Returns mailing address and RSVP information for all guests at that address for the specified event
+
+### RSVP Endpoints
 - `POST /rsvp` - Update RSVP responses
+  - Requires: mailing_address_id and list of invitee RSVP updates
+  - Updates RSVP responses for multiple invitees associated with a mailing address
+- `POST /rsvp/event/{event_id}` - Update RSVP using guest credentials
+  - Requires: email, phone_number, password, and list of invitee RSVP updates
+  - Allows guests to update their RSVP using their credentials
+
+### Event Endpoints
+- `GET /event` - Get all events
+  - Returns all top-level events (events that are not part of another event)
+  - Optional query parameter: `part_of` (UUID) - returns all sub-events of the specified parent event
+- `POST /event` - Create or update an event
+  - Creates a new event with name and date
+  - Optional query parameter: `id` (UUID) - if provided, updates existing event's name and date (ignores part_of)
+  - Optional field: `part_of` (UUID) - indicates this event is part of a larger event
+- `DELETE /event/{event_id}` - Delete an event
+  - Cannot delete if the event has sub-events or guests
+  - Optional query parameter: `delete_sub_events` (bool) - if true, deletes event and sub-events (only if no guests exist)
+- `POST /event/{event_id}/clear-guests` - Remove all guests from an event
+  - Removes the association between the event and invitees (does not delete the invitees themselves)
 - `GET /event/{event_id}/guests` - Get guests for an event
+  - Returns list of wedding invitees for the event
+  - Optional query parameter: `response` (yes/no/pending) - filter by RSVP response
+
+### Documentation
 - `GET /docs` - Interactive API documentation (Swagger UI)
 - `GET /redoc` - Alternative API documentation (ReDoc)
 

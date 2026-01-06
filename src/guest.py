@@ -166,6 +166,7 @@ async def create_guests(event_id: UUID, request: GuestRequest, db: Session = Dep
 
     invitees_response = [
         WeddingInvitee(
+            id=invitee_db.id,
             full_name=invitee_db.full_name,
             mailing_address=invitee_db.mailing_address_id,
             rsvp_response=invitee_db.rsvp_response,
@@ -222,6 +223,7 @@ async def get_guest(guest_id: UUID, db: Session = Depends(get_db)):
         # Convert to response models
         guests_response = [
             WeddingInvitee(
+                id=inv.id,
                 full_name=inv.full_name,
                 mailing_address=inv.mailing_address_id,
                 rsvp_response=inv.rsvp_response,
@@ -312,6 +314,7 @@ async def get_guest_rsvp_info(request: GuestRSVPInfoRequest, db: Session = Depen
     # Convert invitees to response models
     guests_response = [
         WeddingInvitee(
+            id=inv.id,
             full_name=inv.full_name,
             mailing_address=inv.mailing_address_id,
             rsvp_response=inv.rsvp_response,

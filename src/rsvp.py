@@ -111,6 +111,7 @@ async def update_rsvps(request: RSVPRequest, db: Session = Depends(get_db)):
     # Build response
     invitees_response = [
         WeddingInvitee(
+            id=invitee.id,
             full_name=invitee.full_name,
             mailing_address=invitee.mailing_address_id,
             rsvp_response=invitee.rsvp_response,
@@ -215,6 +216,7 @@ async def update_rsvp_by_guest_info(
     # Build response
     invitees_response = [
         WeddingInvitee(
+            id=invitee.id,
             full_name=invitee.full_name,
             mailing_address=invitee.mailing_address_id,
             rsvp_response=invitee.rsvp_response,

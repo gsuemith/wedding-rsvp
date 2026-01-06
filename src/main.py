@@ -90,6 +90,7 @@ class MailingAddress(BaseModel):
 
 
 class WeddingInvitee(BaseModel):
+    id: UUID
     full_name: str
     mailing_address: UUID
     rsvp_response: RSVPResponse

@@ -325,6 +325,7 @@ async def get_event_guests(
     # Build response
     invitees_response = [
         WeddingInvitee(
+            id=invitee.id,
             full_name=invitee.full_name,
             mailing_address=invitee.mailing_address_id,
             rsvp_response=invitee.rsvp_response,
