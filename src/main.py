@@ -152,6 +152,29 @@ def init_db():
     # Ensure engine is initialized before creating tables
     db_engine, _ = get_database_engine()
     Base.metadata.create_all(bind=db_engine)
+    
+    # Add missing columns to existing tables (migration)
+    # This handles the case where tables exist but columns were added later
+    from sqlalchemy import text, inspect
+    
+    inspector = inspect(db_engine)
+    
+    # Check mailing_addresses table
+    if 'mailing_addresses' in inspector.get_table_names():
+        existing_columns = [col['name'] for col in inspector.get_columns('mailing_addresses')]
+        
+        with db_engine.connect() as conn:
+            if 'email' not in existing_columns:
+                conn.execute(text("ALTER TABLE mailing_addresses ADD COLUMN email VARCHAR"))
+                conn.commit()
+            
+            if 'phone_number' not in existing_columns:
+                conn.execute(text("ALTER TABLE mailing_addresses ADD COLUMN phone_number VARCHAR"))
+                conn.commit()
+            
+            if 'password_hash' not in existing_columns:
+                conn.execute(text("ALTER TABLE mailing_addresses ADD COLUMN password_hash VARCHAR"))
+                conn.commit()
 
 
 app = FastAPI()
