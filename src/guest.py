@@ -118,6 +118,9 @@ async def create_guests(event_id: UUID, request: GuestRequest, db: Session = Dep
     if request.mailing_address.password:
         password_hash = hash_password(request.mailing_address.password)
     
+    # Sanitize phone number and store it for use in response
+    sanitized_phone = sanitize_phone_number(request.mailing_address.phone_number)
+    
     mailing_address_db = MailingAddressDB(
         address_line_1=request.mailing_address.address_line_1,
         address_line_2=request.mailing_address.address_line_2,
@@ -125,7 +128,7 @@ async def create_guests(event_id: UUID, request: GuestRequest, db: Session = Dep
         state=request.mailing_address.state,
         postal_code=request.mailing_address.postal_code,
         email=request.mailing_address.email,
-        phone_number=sanitize_phone_number(request.mailing_address.phone_number),
+        phone_number=sanitized_phone,
         password_hash=password_hash,
     )
     db.add(mailing_address_db)
@@ -161,7 +164,8 @@ async def create_guests(event_id: UUID, request: GuestRequest, db: Session = Dep
     for invitee_db in invitees_db:
         db.refresh(invitee_db)
 
-    # Build response
+    # Build response - use the sanitized phone number we stored
+    # (refresh might not always work correctly, so use the value we know we set)
     mailing_address_response = MailingAddress(
         id=mailing_address_db.id,
         address_line_1=mailing_address_db.address_line_1,
@@ -170,7 +174,7 @@ async def create_guests(event_id: UUID, request: GuestRequest, db: Session = Dep
         state=mailing_address_db.state,
         postal_code=mailing_address_db.postal_code,
         email=mailing_address_db.email,
-        phone_number=mailing_address_db.phone_number,
+        phone_number=sanitized_phone,  # Use the sanitized value we stored
     )
 
     # Get associations for this event to get rsvp_response

@@ -11,7 +11,14 @@ def sanitize_phone_number(phone: Optional[str]) -> Optional[str]:
     """Remove all non-digit characters from phone number."""
     if phone is None:
         return None
-    return re.sub(r'\D', '', phone)
+    # Strip whitespace first
+    phone = phone.strip()
+    if not phone:
+        return None
+    # Remove all non-digit characters
+    sanitized = re.sub(r'\D', '', phone)
+    # Return None if result is empty, otherwise return the sanitized number
+    return sanitized if sanitized else None
 
 
 def hash_password(password: str) -> str:
