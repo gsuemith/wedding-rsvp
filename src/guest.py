@@ -10,6 +10,7 @@ from .main import (
     MailingAddressDB,
     WeddingInviteeDB,
     EventDB,
+    EventInviteeAssociation,
     RSVPResponse,
     MailingAddress,
     WeddingInvitee,
@@ -133,7 +134,6 @@ async def create_guests(event_id: UUID, request: GuestRequest, db: Session = Dep
         invitee_db = WeddingInviteeDB(
             full_name=name,
             mailing_address_id=mailing_address_db.id,
-            rsvp_response=RSVPResponse.PENDING,
         )
         db.add(invitee_db)
         invitees_db.append(invitee_db)
@@ -141,8 +141,14 @@ async def create_guests(event_id: UUID, request: GuestRequest, db: Session = Dep
     # Flush to get invitee IDs before associating with event
     db.flush()
     
-    # Associate invitees with the event (populates junction table)
-    event.invitees.extend(invitees_db)
+    # Associate invitees with the event (create associations with PENDING status)
+    for invitee_db in invitees_db:
+        association = EventInviteeAssociation(
+            event_id=event_id,
+            invitee_id=invitee_db.id,
+            rsvp_response=RSVPResponse.PENDING,
+        )
+        db.add(association)
 
     # Commit all changes
     db.commit()
@@ -164,12 +170,19 @@ async def create_guests(event_id: UUID, request: GuestRequest, db: Session = Dep
         phone_number=mailing_address_db.phone_number,
     )
 
+    # Get associations for this event to get rsvp_response
+    associations = db.query(EventInviteeAssociation).filter(
+        EventInviteeAssociation.event_id == event_id,
+        EventInviteeAssociation.invitee_id.in_([inv.id for inv in invitees_db])
+    ).all()
+    association_map = {assoc.invitee_id: assoc.rsvp_response for assoc in associations}
+    
     invitees_response = [
         WeddingInvitee(
             id=invitee_db.id,
             full_name=invitee_db.full_name,
             mailing_address=invitee_db.mailing_address_id,
-            rsvp_response=invitee_db.rsvp_response,
+            rsvp_response=association_map.get(invitee_db.id, RSVPResponse.PENDING),
         )
         for invitee_db in invitees_db
     ]
@@ -208,34 +221,39 @@ async def get_guest(guest_id: UUID, db: Session = Depends(get_db)):
         phone_number=mailing_address.phone_number,
     )
     
-    # Get all events this invitee is attending (through the backref relationship)
-    events = invitee.events
+    # Get all events this invitee is attending (through associations)
+    event_associations = db.query(EventInviteeAssociation).filter(
+        EventInviteeAssociation.invitee_id == guest_id
+    ).all()
     
     # Build events with guests list
     events_with_guests = []
-    for event in events:
+    for assoc in event_associations:
+        event = assoc.event
+        
         # Find all invitees with the same mailing address who are also in this event
-        same_address_invitees = [
-            e for e in event.invitees 
-            if e.mailing_address_id == invitee.mailing_address_id
-        ]
+        same_address_associations = db.query(EventInviteeAssociation).filter(
+            EventInviteeAssociation.event_id == event.id
+        ).join(WeddingInviteeDB, EventInviteeAssociation.invitee_id == WeddingInviteeDB.id).filter(
+            WeddingInviteeDB.mailing_address_id == invitee.mailing_address_id
+        ).all()
         
         # Convert to response models
         guests_response = [
             WeddingInvitee(
-                id=inv.id,
-                full_name=inv.full_name,
-                mailing_address=inv.mailing_address_id,
-                rsvp_response=inv.rsvp_response,
+                id=inv_assoc.invitee.id,
+                full_name=inv_assoc.invitee.full_name,
+                mailing_address=inv_assoc.invitee.mailing_address_id,
+                rsvp_response=inv_assoc.rsvp_response,
             )
-            for inv in same_address_invitees
+            for inv_assoc in same_address_associations
         ]
         
         events_with_guests.append(
             EventWithGuests(
-                id=event.id,
-                name=event.name,
-                date=event.date,
+                id=assoc.event.id,
+                name=assoc.event.name,
+                date=assoc.event.date,
                 guests=guests_response,
             )
         )
@@ -290,10 +308,15 @@ async def get_guest_rsvp_info(request: GuestRSVPInfoRequest, db: Session = Depen
         )
     
     # Get all invitees at this address who are associated with the event
-    event_invitee_ids = {invitee.id for invitee in event.invitees}
-    address_invitees = [invitee for invitee in mailing_address.invitees if invitee.id in event_invitee_ids]
+    address_invitee_ids = [inv.id for inv in mailing_address.invitees]
     
-    if not address_invitees:
+    # Get associations for this event and address
+    associations = db.query(EventInviteeAssociation).filter(
+        EventInviteeAssociation.event_id == request.event_id,
+        EventInviteeAssociation.invitee_id.in_(address_invitee_ids)
+    ).all()
+    
+    if not associations:
         raise HTTPException(
             status_code=404,
             detail=f"No guests found at this address for event {request.event_id}"
@@ -311,15 +334,15 @@ async def get_guest_rsvp_info(request: GuestRSVPInfoRequest, db: Session = Depen
         phone_number=mailing_address.phone_number,
     )
     
-    # Convert invitees to response models
+    # Convert associations to response models
     guests_response = [
         WeddingInvitee(
-            id=inv.id,
-            full_name=inv.full_name,
-            mailing_address=inv.mailing_address_id,
-            rsvp_response=inv.rsvp_response,
+            id=assoc.invitee.id,
+            full_name=assoc.invitee.full_name,
+            mailing_address=assoc.invitee.mailing_address_id,
+            rsvp_response=assoc.rsvp_response,
         )
-        for inv in address_invitees
+        for assoc in associations
     ]
     
     # Build event RSVP info

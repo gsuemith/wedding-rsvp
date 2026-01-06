@@ -9,6 +9,7 @@ from .main import (
     MailingAddressDB,
     WeddingInviteeDB,
     EventDB,
+    EventInviteeAssociation,
     RSVPResponse,
     WeddingInvitee,
 )
@@ -23,6 +24,7 @@ class InviteeRSVPUpdate(BaseModel):
 
 class RSVPRequest(BaseModel):
     mailing_address_id: UUID
+    event_id: UUID
     invitees: List[InviteeRSVPUpdate]
 
 
@@ -63,8 +65,16 @@ router = APIRouter()
 @router.post("/rsvp", response_model=RSVPUpdateResponse)
 async def update_rsvps(request: RSVPRequest, db: Session = Depends(get_db)):
     """
-    Update RSVP responses for multiple invitees associated with a mailing address.
+    Update RSVP responses for multiple invitees associated with a mailing address and event.
     """
+    # Verify event exists
+    event = db.query(EventDB).filter(EventDB.id == request.event_id).first()
+    if not event:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Event with id {request.event_id} not found"
+        )
+    
     # Verify mailing address exists
     mailing_address = db.query(MailingAddressDB).filter(
         MailingAddressDB.id == request.mailing_address_id
@@ -76,47 +86,49 @@ async def update_rsvps(request: RSVPRequest, db: Session = Depends(get_db)):
             detail=f"Mailing address with id {request.mailing_address_id} not found"
         )
     
-    # Update each invitee's RSVP response
-    updated_invitees = []
+    # Update each invitee's RSVP response for this event
+    updated_associations = []
     for invitee_update in request.invitees:
-        # Find the invitee
-        invitee = db.query(WeddingInviteeDB).filter(
-            WeddingInviteeDB.id == invitee_update.invitee_id
+        # Find the association
+        association = db.query(EventInviteeAssociation).filter(
+            EventInviteeAssociation.event_id == request.event_id,
+            EventInviteeAssociation.invitee_id == invitee_update.invitee_id
         ).first()
         
-        if not invitee:
+        if not association:
             raise HTTPException(
                 status_code=404,
-                detail=f"Invitee with id {invitee_update.invitee_id} not found"
+                detail=f"Invitee {invitee_update.invitee_id} is not associated with event {request.event_id}"
             )
         
         # Verify invitee belongs to the specified mailing address
-        if invitee.mailing_address_id != request.mailing_address_id:
+        if association.invitee.mailing_address_id != request.mailing_address_id:
             raise HTTPException(
                 status_code=400,
                 detail=f"Invitee {invitee_update.invitee_id} does not belong to mailing address {request.mailing_address_id}"
             )
         
-        # Update the RSVP response
-        invitee.rsvp_response = invitee_update.rsvp_response
-        updated_invitees.append(invitee)
+        # Update the RSVP response in the association
+        association.rsvp_response = invitee_update.rsvp_response
+        updated_associations.append(association)
     
     # Commit all changes
     db.commit()
     
     # Refresh to ensure we have the latest data
-    for invitee in updated_invitees:
-        db.refresh(invitee)
+    for association in updated_associations:
+        db.refresh(association)
+        db.refresh(association.invitee)
     
     # Build response
     invitees_response = [
         WeddingInvitee(
-            id=invitee.id,
-            full_name=invitee.full_name,
-            mailing_address=invitee.mailing_address_id,
-            rsvp_response=invitee.rsvp_response,
+            id=assoc.invitee.id,
+            full_name=assoc.invitee.full_name,
+            mailing_address=assoc.invitee.mailing_address_id,
+            rsvp_response=assoc.rsvp_response,
         )
-        for invitee in updated_invitees
+        for assoc in updated_associations
     ]
     
     return RSVPUpdateResponse(updated_invitees=invitees_response)
@@ -169,59 +181,52 @@ async def update_rsvp_by_guest_info(
             detail="Invalid password"
         )
     
-    # Get all invitees at this address who are associated with the event
-    event_invitee_ids = {invitee.id for invitee in event.invitees}
-    address_invitee_ids = {invitee.id for invitee in mailing_address.invitees}
-    valid_invitee_ids = event_invitee_ids & address_invitee_ids
+    # Get all invitees at this address
+    address_invitee_ids = [inv.id for inv in mailing_address.invitees]
     
-    # Update each invitee's RSVP response
-    updated_invitees = []
+    # Update each invitee's RSVP response for this event
+    updated_associations = []
     for invitee_update in request.invitees:
-        # Verify invitee ID is valid for this event and address
-        if invitee_update.invitee_id not in valid_invitee_ids:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Invitee {invitee_update.invitee_id} is not associated with event {event_id} and this mailing address"
-            )
-        
-        # Find the invitee
-        invitee = db.query(WeddingInviteeDB).filter(
-            WeddingInviteeDB.id == invitee_update.invitee_id
-        ).first()
-        
-        if not invitee:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Invitee with id {invitee_update.invitee_id} not found"
-            )
-        
         # Verify invitee belongs to the mailing address
-        if invitee.mailing_address_id != mailing_address.id:
+        if invitee_update.invitee_id not in address_invitee_ids:
             raise HTTPException(
                 status_code=400,
                 detail=f"Invitee {invitee_update.invitee_id} does not belong to this mailing address"
             )
         
-        # Update the RSVP response
-        invitee.rsvp_response = invitee_update.rsvp_response
-        updated_invitees.append(invitee)
+        # Find the association
+        association = db.query(EventInviteeAssociation).filter(
+            EventInviteeAssociation.event_id == event_id,
+            EventInviteeAssociation.invitee_id == invitee_update.invitee_id
+        ).first()
+        
+        if not association:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Invitee {invitee_update.invitee_id} is not associated with event {event_id}"
+            )
+        
+        # Update the RSVP response in the association
+        association.rsvp_response = invitee_update.rsvp_response
+        updated_associations.append(association)
     
     # Commit all changes
     db.commit()
     
     # Refresh to ensure we have the latest data
-    for invitee in updated_invitees:
-        db.refresh(invitee)
+    for association in updated_associations:
+        db.refresh(association)
+        db.refresh(association.invitee)
     
     # Build response
     invitees_response = [
         WeddingInvitee(
-            id=invitee.id,
-            full_name=invitee.full_name,
-            mailing_address=invitee.mailing_address_id,
-            rsvp_response=invitee.rsvp_response,
+            id=assoc.invitee.id,
+            full_name=assoc.invitee.full_name,
+            mailing_address=assoc.invitee.mailing_address_id,
+            rsvp_response=assoc.rsvp_response,
         )
-        for invitee in updated_invitees
+        for assoc in updated_associations
     ]
     
     return RSVPUpdateResponse(updated_invitees=invitees_response)

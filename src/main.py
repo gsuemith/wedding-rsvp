@@ -119,18 +119,21 @@ class WeddingInviteeDB(Base):
     id = Column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
     full_name = Column(String, nullable=False)
     mailing_address_id = Column(PGUUID(as_uuid=True), ForeignKey("mailing_addresses.id"), nullable=False)
-    rsvp_response = Column(SQLEnum(RSVPResponse), nullable=False)
 
     mailing_address_ref = relationship("MailingAddressDB", back_populates="invitees")
+    event_associations = relationship("EventInviteeAssociation", back_populates="invitee")
 
 
-# Junction table for events and invitees (many-to-many)
-event_invitee_association = Table(
-    "event_invitee_association",
-    Base.metadata,
-    Column("event_id", PGUUID(as_uuid=True), ForeignKey("events.id"), primary_key=True),
-    Column("invitee_id", PGUUID(as_uuid=True), ForeignKey("wedding_invitees.id"), primary_key=True),
-)
+# Association model for events and invitees (many-to-many with rsvp_response)
+class EventInviteeAssociation(Base):
+    __tablename__ = "event_invitee_association"
+
+    event_id = Column(PGUUID(as_uuid=True), ForeignKey("events.id"), primary_key=True)
+    invitee_id = Column(PGUUID(as_uuid=True), ForeignKey("wedding_invitees.id"), primary_key=True)
+    rsvp_response = Column(SQLEnum(RSVPResponse), nullable=False, default=RSVPResponse.PENDING)
+
+    event = relationship("EventDB", back_populates="invitee_associations")
+    invitee = relationship("WeddingInviteeDB", back_populates="event_associations")
 
 
 class EventDB(Base):
@@ -141,11 +144,7 @@ class EventDB(Base):
     date = Column(DateTime, nullable=False)
     part_of = Column(PGUUID(as_uuid=True), ForeignKey("events.id"), nullable=True)
 
-    invitees = relationship(
-        "WeddingInviteeDB",
-        secondary=event_invitee_association,
-        backref="events"
-    )
+    invitee_associations = relationship("EventInviteeAssociation", back_populates="event")
 
 
 # Create tables
@@ -175,6 +174,30 @@ def init_db():
             
             if 'password_hash' not in existing_columns:
                 conn.execute(text("ALTER TABLE mailing_addresses ADD COLUMN password_hash VARCHAR"))
+                conn.commit()
+    
+    # Migrate rsvp_response from wedding_invitees to event_invitee_association
+    if 'event_invitee_association' in inspector.get_table_names():
+        existing_assoc_columns = [col['name'] for col in inspector.get_columns('event_invitee_association')]
+        
+        with db_engine.connect() as conn:
+            # Add rsvp_response column to association table if it doesn't exist
+            if 'rsvp_response' not in existing_assoc_columns:
+                conn.execute(text("ALTER TABLE event_invitee_association ADD COLUMN rsvp_response VARCHAR"))
+                conn.commit()
+                
+                # Migrate existing data: copy rsvp_response from wedding_invitees to associations
+                # This assumes all existing associations should have PENDING as default
+                # If wedding_invitees still has rsvp_response, we could migrate it, but for now set to PENDING
+                conn.execute(text("""
+                    UPDATE event_invitee_association 
+                    SET rsvp_response = 'pending' 
+                    WHERE rsvp_response IS NULL
+                """))
+                conn.commit()
+                
+                # Make rsvp_response NOT NULL after setting defaults
+                conn.execute(text("ALTER TABLE event_invitee_association ALTER COLUMN rsvp_response SET NOT NULL"))
                 conn.commit()
 
 

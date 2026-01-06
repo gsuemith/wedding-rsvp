@@ -9,6 +9,7 @@ from .main import (
     EventDB,
     MailingAddressDB,
     WeddingInviteeDB,
+    EventInviteeAssociation,
     RSVPResponse,
     WeddingInvitee,
 )
@@ -79,14 +80,14 @@ async def get_all_events(
     # Build response for each event
     events_response = []
     for event_db in events:
-        # Get invitee IDs
-        invitee_ids = [invitee.id for invitee in event_db.invitees]
+        # Get invitee IDs and mailing addresses from associations
+        invitee_ids = [assoc.invitee_id for assoc in event_db.invitee_associations]
         
         # Get unique mailing address IDs from invitees (guest_list)
         mailing_address_ids = list(set([
-            invitee.mailing_address_id 
-            for invitee in event_db.invitees
-            if invitee.mailing_address_id is not None
+            assoc.invitee.mailing_address_id 
+            for assoc in event_db.invitee_associations
+            if assoc.invitee.mailing_address_id is not None
         ]))
         
         events_response.append(
@@ -130,14 +131,14 @@ async def create_event(
         db.commit()
         db.refresh(event_db)
         
-        # Get invitee IDs
-        invitee_ids = [invitee.id for invitee in event_db.invitees]
+        # Get invitee IDs from associations
+        invitee_ids = [assoc.invitee_id for assoc in event_db.invitee_associations]
         
         # Get unique mailing address IDs from invitees (guest_list)
         mailing_address_ids = list(set([
-            invitee.mailing_address_id 
-            for invitee in event_db.invitees
-            if invitee.mailing_address_id is not None
+            assoc.invitee.mailing_address_id 
+            for assoc in event_db.invitee_associations
+            if assoc.invitee.mailing_address_id is not None
         ]))
         
         return Event(
@@ -174,8 +175,8 @@ async def create_event(
         # For now, return empty list
         guest_list = []
         
-        # Get invitee IDs (will be empty initially)
-        invitee_ids = []
+        # Get invitee IDs from associations (will be empty initially)
+        invitee_ids = [assoc.invitee_id for assoc in event_db.invitee_associations]
         
         return Event(
             id=event_db.id,
@@ -212,16 +213,16 @@ async def delete_event(
     
     if delete_sub_events:
         # Check if main event has guests
-        if event.invitees:
+        if event.invitee_associations:
             raise HTTPException(
                 status_code=400,
-                detail=f"Cannot delete event {event_id}: it has {len(event.invitees)} guest(s). Please remove guests first."
+                detail=f"Cannot delete event {event_id}: it has {len(event.invitee_associations)} guest(s). Please remove guests first."
             )
         
         # Check if any sub-events have guests
         events_with_guests = []
         for sub_event in sub_events:
-            if sub_event.invitees:
+            if sub_event.invitee_associations:
                 events_with_guests.append(sub_event.name)
         
         if events_with_guests:
@@ -250,10 +251,10 @@ async def delete_event(
             )
         
         # Check if there are any invitees associated with this event
-        if event.invitees:
+        if event.invitee_associations:
             raise HTTPException(
                 status_code=400,
-                detail=f"Cannot delete event {event_id}: it has {len(event.invitees)} guest(s). Please remove guests first."
+                detail=f"Cannot delete event {event_id}: it has {len(event.invitee_associations)} guest(s). Please remove guests first."
             )
         
         # Safe to delete
@@ -282,10 +283,11 @@ async def clear_event_guests(
         )
     
     # Get count of invitees before clearing
-    invitee_count = len(event.invitees)
+    invitee_count = len(event.invitee_associations)
     
-    # Clear the association (removes entries from junction table)
-    event.invitees.clear()
+    # Clear the associations (removes entries from junction table)
+    for assoc in event.invitee_associations:
+        db.delete(assoc)
     
     db.commit()
     
@@ -315,22 +317,24 @@ async def get_event_guests(
             detail=f"Event with id {event_id} not found"
         )
     
-    # Get invitees for this event through the relationship
-    invitees = event.invitees
+    # Get associations for this event
+    associations = db.query(EventInviteeAssociation).filter(
+        EventInviteeAssociation.event_id == event_id
+    ).all()
     
     # Apply RSVP response filter if provided
     if response is not None:
-        invitees = [invitee for invitee in invitees if invitee.rsvp_response == response]
+        associations = [assoc for assoc in associations if assoc.rsvp_response == response]
     
     # Build response
     invitees_response = [
         WeddingInvitee(
-            id=invitee.id,
-            full_name=invitee.full_name,
-            mailing_address=invitee.mailing_address_id,
-            rsvp_response=invitee.rsvp_response,
+            id=assoc.invitee.id,
+            full_name=assoc.invitee.full_name,
+            mailing_address=assoc.invitee.mailing_address_id,
+            rsvp_response=assoc.rsvp_response,
         )
-        for invitee in invitees
+        for assoc in associations
     ]
     
     return invitees_response
