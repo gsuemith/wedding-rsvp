@@ -1,10 +1,13 @@
 import re
+import logging
 from typing import Optional
 from passlib.context import CryptContext
 
 # Password hashing context
 # Using pbkdf2_sha256 instead of bcrypt to avoid 72-byte password limit
 pwd_context = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
+
+logger = logging.getLogger(__name__)
 
 
 def sanitize_phone_number(phone: Optional[str]) -> Optional[str]:
@@ -33,5 +36,8 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
     """
     Verify a password against its hash.
     """
-    return pwd_context.verify(plain_password, hashed_password)
+    logger.info(f"Verifying password - plain_password: {plain_password}, hashed_password: {hashed_password}")
+    result = pwd_context.verify(plain_password, hashed_password)
+    logger.info(f"Password verification result: {result}")
+    return result
 

@@ -53,11 +53,7 @@ class GuestDetailResponse(BaseModel):
     events: List[EventWithGuests]
 
 
-class GuestRSVPInfoRequest(BaseModel):
-    email: str
-    phone_number: str
-    password: str
-    event_id: UUID
+
 
 
 class EventRSVPInfo(BaseModel):
@@ -284,6 +280,11 @@ async def get_guest(guest_id: UUID, db: Session = Depends(get_db)):
         events=events_with_guests,
     )
 
+class GuestRSVPInfoRequest(BaseModel):
+    email: str
+    phone_number: str
+    password: str
+    event_id: UUID
 
 @router.post("/guest/rsvp-info", response_model=GuestRSVPInfoResponse)
 async def get_guest_rsvp_info(request: GuestRSVPInfoRequest, db: Session = Depends(get_db)):
