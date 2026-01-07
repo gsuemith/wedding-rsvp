@@ -335,12 +335,19 @@ async def get_guest_rsvp_info(request: GuestRSVPInfoRequest, db: Session = Depen
     import logging
     logger = logging.getLogger(__name__)
     logger.info(f"Looking for guests - event_id: {request.event_id}, address_invitee_ids: {address_invitee_ids}")
+    logger.info(f"Mailing address ID: {mailing_address.id}, Email: {mailing_address.email}, Phone: {mailing_address.phone_number}")
     
     # Get all associations for these invitees to see what events they're associated with
     all_associations = db.query(EventInviteeAssociation).filter(
         EventInviteeAssociation.invitee_id.in_(address_invitee_ids)
     ).all()
-    logger.info(f"All associations for these invitees: {[(a.event_id, a.invitee_id) for a in all_associations]}")
+    logger.info(f"All associations for these invitees: {[(str(a.event_id), str(a.invitee_id), a.rsvp_response) for a in all_associations]}")
+    
+    # Also check what invitees are associated with the requested event
+    event_associations = db.query(EventInviteeAssociation).filter(
+        EventInviteeAssociation.event_id == request.event_id
+    ).all()
+    logger.info(f"All invitees associated with event {request.event_id}: {[str(a.invitee_id) for a in event_associations]}")
     
     # Get associations for this event and address
     associations = db.query(EventInviteeAssociation).filter(
@@ -348,14 +355,14 @@ async def get_guest_rsvp_info(request: GuestRSVPInfoRequest, db: Session = Depen
         EventInviteeAssociation.invitee_id.in_(address_invitee_ids)
     ).all()
     
-    logger.info(f"Associations found for event {request.event_id}: {len(associations)}")
+    logger.info(f"Associations found for event {request.event_id} and address invitees: {len(associations)}")
     
     if not associations:
         # Provide more helpful error message
-        event_ids_with_guests = list(set([a.event_id for a in all_associations]))
+        event_ids_with_guests = list(set([str(a.event_id) for a in all_associations]))
         raise HTTPException(
             status_code=404,
-            detail=f"No guests found at this address for event {request.event_id}. Guests are associated with events: {event_ids_with_guests}"
+            detail=f"No guests found at this address for event {request.event_id}. Address invitee IDs: {[str(id) for id in address_invitee_ids]}, Event invitee IDs: {[str(a.invitee_id) for a in event_associations]}, Guests are associated with events: {event_ids_with_guests}"
         )
     
     # Build mailing address response
