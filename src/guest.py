@@ -231,18 +231,34 @@ async def get_guest(guest_id: UUID, db: Session = Depends(get_db)):
     """
     Get guest details including their name, mailing address, and all events they're attending.
     For each event, includes a list of all guests with the same address attending that event.
+    Accepts either an invitee ID or a mailing address ID.
     """
-    # Find the invitee
-    invitee = db.query(WeddingInviteeDB).filter(WeddingInviteeDB.id == guest_id).first()
+    # First check if guest_id is a mailing address ID
+    mailing_address = db.query(MailingAddressDB).filter(MailingAddressDB.id == guest_id).first()
     
-    if not invitee:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Guest with id {guest_id} not found"
-        )
-    
-    # Get mailing address
-    mailing_address = invitee.mailing_address_ref
+    if mailing_address:
+        # Use the mailing address and get the first invitee at this address
+        invitee = db.query(WeddingInviteeDB).filter(
+            WeddingInviteeDB.mailing_address_id == guest_id
+        ).first()
+        
+        if not invitee:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No invitees found for mailing address {guest_id}"
+            )
+    else:
+        # Try to find by invitee ID
+        invitee = db.query(WeddingInviteeDB).filter(WeddingInviteeDB.id == guest_id).first()
+        
+        if not invitee:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Guest with id {guest_id} not found (checked as both invitee ID and mailing address ID)"
+            )
+        
+        # Get mailing address from invitee
+        mailing_address = invitee.mailing_address_ref
     mailing_address_response = MailingAddress(
         id=mailing_address.id,
         address_line_1=mailing_address.address_line_1,
@@ -254,15 +270,30 @@ async def get_guest(guest_id: UUID, db: Session = Depends(get_db)):
         phone_number=mailing_address.phone_number,
     )
     
-    # Get all events this invitee is attending (through associations)
-    event_associations = db.query(EventInviteeAssociation).filter(
-        EventInviteeAssociation.invitee_id == guest_id
-    ).all()
+    # Get all events this invitee (or all invitees at this mailing address) is attending (through associations)
+    # If guest_id was a mailing address ID, get associations for all invitees at that address
+    if mailing_address.id == guest_id:
+        # Get all invitee IDs at this mailing address
+        invitee_ids = [inv.id for inv in mailing_address.invitees]
+        event_associations = db.query(EventInviteeAssociation).filter(
+            EventInviteeAssociation.invitee_id.in_(invitee_ids)
+        ).all()
+    else:
+        # guest_id was an invitee ID, get associations for just that invitee
+        event_associations = db.query(EventInviteeAssociation).filter(
+            EventInviteeAssociation.invitee_id == guest_id
+        ).all()
     
-    # Build events with guests list
+    # Build events with guests list (deduplicate by event ID)
     events_with_guests = []
+    seen_event_ids = set()
     for assoc in event_associations:
         event = assoc.event
+        
+        # Skip if we've already processed this event
+        if event.id in seen_event_ids:
+            continue
+        seen_event_ids.add(event.id)
         
         # Find all invitees with the same mailing address who are also in this event
         same_address_associations = db.query(EventInviteeAssociation).filter(
@@ -284,9 +315,9 @@ async def get_guest(guest_id: UUID, db: Session = Depends(get_db)):
         
         events_with_guests.append(
             EventWithGuests(
-                id=assoc.event.id,
-                name=assoc.event.name,
-                date=assoc.event.date,
+                id=event.id,
+                name=event.name,
+                date=event.date,
                 guests=guests_response,
             )
         )
