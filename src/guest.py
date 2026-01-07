@@ -358,12 +358,49 @@ async def get_guest_rsvp_info(request: GuestRSVPInfoRequest, db: Session = Depen
     logger.info(f"Associations found for event {request.event_id} and address invitees: {len(associations)}")
     
     if not associations:
-        # Provide more helpful error message
-        event_ids_with_guests = list(set([str(a.event_id) for a in all_associations]))
-        raise HTTPException(
-            status_code=404,
-            detail=f"No guests found at this address for event {request.event_id}. Address invitee IDs: {[str(id) for id in address_invitee_ids]}, Event invitee IDs: {[str(a.invitee_id) for a in event_associations]}, Guests are associated with events: {event_ids_with_guests}"
-        )
+        # If no associations exist but invitees are at this address, create them
+        # This handles the case where associations were missing or cleared
+        if address_invitee_ids:
+            logger.warning(f"No associations found for event {request.event_id} and address invitees. Creating missing associations.")
+            # Get all sub-events of the main event
+            sub_events = db.query(EventDB).filter(EventDB.part_of == request.event_id).all()
+            
+            # Create associations for the main event (rsvp_response = "yes")
+            for invitee_id in address_invitee_ids:
+                main_association = EventInviteeAssociation(
+                    event_id=request.event_id,
+                    invitee_id=invitee_id,
+                    rsvp_response=RSVPResponse.YES,
+                )
+                db.add(main_association)
+            
+            # Create associations for all sub-events (rsvp_response = "pending")
+            for sub_event in sub_events:
+                for invitee_id in address_invitee_ids:
+                    sub_association = EventInviteeAssociation(
+                        event_id=sub_event.id,
+                        invitee_id=invitee_id,
+                        rsvp_response=RSVPResponse.PENDING,
+                    )
+                    db.add(sub_association)
+            
+            db.commit()
+            
+            # Re-query associations after creating them
+            associations = db.query(EventInviteeAssociation).filter(
+                EventInviteeAssociation.event_id == request.event_id,
+                EventInviteeAssociation.invitee_id.in_(address_invitee_ids)
+            ).all()
+            
+            logger.info(f"Created missing associations. Now found {len(associations)} associations.")
+        
+        if not associations:
+            # Still no associations - provide helpful error message
+            event_ids_with_guests = list(set([str(a.event_id) for a in all_associations]))
+            raise HTTPException(
+                status_code=404,
+                detail=f"No guests found at this address for event {request.event_id}. Address invitee IDs: {[str(id) for id in address_invitee_ids]}, Event invitee IDs: {[str(a.invitee_id) for a in event_associations]}, Guests are associated with events: {event_ids_with_guests}"
+            )
     
     # Build mailing address response
     mailing_address_response = MailingAddress(
