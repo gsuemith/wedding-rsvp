@@ -331,16 +331,31 @@ async def get_guest_rsvp_info(request: GuestRSVPInfoRequest, db: Session = Depen
     # Get all invitees at this address who are associated with the event
     address_invitee_ids = [inv.id for inv in mailing_address.invitees]
     
+    # Log for debugging
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.info(f"Looking for guests - event_id: {request.event_id}, address_invitee_ids: {address_invitee_ids}")
+    
+    # Get all associations for these invitees to see what events they're associated with
+    all_associations = db.query(EventInviteeAssociation).filter(
+        EventInviteeAssociation.invitee_id.in_(address_invitee_ids)
+    ).all()
+    logger.info(f"All associations for these invitees: {[(a.event_id, a.invitee_id) for a in all_associations]}")
+    
     # Get associations for this event and address
     associations = db.query(EventInviteeAssociation).filter(
         EventInviteeAssociation.event_id == request.event_id,
-        EventInviteeAssociation.invitee_id.in_(address_invitee_ids)
+        EventInviteeAssociation.invitee_id.in_(address_i nvitee_ids)
     ).all()
     
+    logger.info(f"Associations found for event {request.event_id}: {len(associations)}")
+    
     if not associations:
+        # Provide more helpful error message
+        event_ids_with_guests = list(set([a.event_id for a in all_associations]))
         raise HTTPException(
             status_code=404,
-            detail=f"No guests found at this address for event {request.event_id}"
+            detail=f"No guests found at this address for event {request.event_id}. Guests are associated with events: {event_ids_with_guests}"
         )
     
     # Build mailing address response

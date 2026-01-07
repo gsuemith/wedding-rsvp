@@ -273,8 +273,8 @@ async def clear_event_guests(
     db: Session = Depends(get_db)
 ):
     """
-    Remove all guests (invitees) linked to an event.
-    This removes the association between the event and invitees, but does not delete the invitees themselves.
+    Remove all guests (invitees) linked to an event and all its sub-events.
+    This removes the association between the event/sub-events and invitees, but does not delete the invitees themselves.
     """
     # Find the event
     event = db.query(EventDB).filter(EventDB.id == event_id).first()
@@ -285,19 +285,34 @@ async def clear_event_guests(
             detail=f"Event with id {event_id} not found"
         )
     
-    # Get count of invitees before clearing
+    # Get all sub-events
+    sub_events = db.query(EventDB).filter(EventDB.part_of == event_id).all()
+    
+    # Get count of invitees before clearing (main event)
     invitee_count = len(event.invitee_associations)
     
-    # Clear the associations (removes entries from junction table)
+    # Clear the associations for the main event (removes entries from junction table)
     for assoc in event.invitee_associations:
         db.delete(assoc)
     
+    # Clear associations for all sub-events
+    sub_event_guests_removed = 0
+    for sub_event in sub_events:
+        sub_event_guests_removed += len(sub_event.invitee_associations)
+        for assoc in sub_event.invitee_associations:
+            db.delete(assoc)
+    
     db.commit()
     
+    total_guests_removed = invitee_count + sub_event_guests_removed
+    
     return {
-        "message": f"Removed {invitee_count} guest(s) from event {event_id}",
+        "message": f"Removed {invitee_count} guest(s) from event {event_id} and {sub_event_guests_removed} guest(s) from {len(sub_events)} sub-event(s)",
         "event_id": str(event_id),
-        "guests_removed": invitee_count
+        "guests_removed": total_guests_removed,
+        "main_event_guests_removed": invitee_count,
+        "sub_events_guests_removed": sub_event_guests_removed,
+        "sub_events_cleared": len(sub_events)
     }
 
 
