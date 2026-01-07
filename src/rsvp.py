@@ -3,6 +3,7 @@ from pydantic import BaseModel
 from typing import List, Optional
 from uuid import UUID
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
 
 from .main import (
     SessionLocal,
@@ -184,7 +185,16 @@ async def update_rsvps(request: RSVPRequest, db: Session = Depends(get_db)):
             updated_associations.append(association)
     
     # Commit all changes
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError as e:
+        db.rollback()
+        if 'mailing_addresses_email_key' in str(e.orig) or 'unique constraint' in str(e.orig).lower():
+            raise HTTPException(
+                status_code=400,
+                detail=f"A mailing address with the provided email already exists"
+            )
+        raise
     
     # Refresh to ensure we have the latest data
     for association in updated_associations:

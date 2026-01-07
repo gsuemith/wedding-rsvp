@@ -4,6 +4,7 @@ from typing import List, Optional
 from uuid import UUID
 from datetime import datetime
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
 
 from .main import (
     SessionLocal,
@@ -128,7 +129,16 @@ async def create_guests(event_id: UUID, request: GuestRequest, db: Session = Dep
         password_hash=password_hash,
     )
     db.add(mailing_address_db)
-    db.flush()  # Flush to get the ID without committing
+    try:
+        db.flush()  # Flush to get the ID without committing
+    except IntegrityError as e:
+        db.rollback()
+        if 'mailing_addresses_email_key' in str(e.orig) or 'unique constraint' in str(e.orig).lower():
+            raise HTTPException(
+                status_code=400,
+                detail=f"A mailing address with email '{request.mailing_address.email}' already exists."
+            )
+        raise
 
     # Create invitees for each name
     invitees_db = []
@@ -166,7 +176,16 @@ async def create_guests(event_id: UUID, request: GuestRequest, db: Session = Dep
             db.add(sub_association)
 
     # Commit all changes
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError as e:
+        db.rollback()
+        if 'mailing_addresses_email_key' in str(e.orig) or 'unique constraint' in str(e.orig).lower():
+            raise HTTPException(
+                status_code=400,
+                detail=f"A mailing address with email '{request.mailing_address.email}' already exists"
+            )
+        raise
 
     # Refresh to ensure we have the latest data
     db.refresh(mailing_address_db)
@@ -437,4 +456,34 @@ async def get_guest_rsvp_info(request: GuestRSVPInfoRequest, db: Session = Depen
         mailing_address=mailing_address_response,
         event=event_rsvp_info,
     )
+
+
+@router.delete("/guest/all")
+async def delete_all_guests(db: Session = Depends(get_db)):
+    """
+    Delete all mailing addresses, invitees, and their event associations.
+    This is a destructive operation that removes all guest data.
+    """
+    # Get counts before deletion
+    mailing_address_count = db.query(MailingAddressDB).count()
+    invitee_count = db.query(WeddingInviteeDB).count()
+    association_count = db.query(EventInviteeAssociation).count()
+    
+    # Delete all associations first (due to foreign key constraints)
+    db.query(EventInviteeAssociation).delete()
+    
+    # Delete all invitees
+    db.query(WeddingInviteeDB).delete()
+    
+    # Delete all mailing addresses
+    db.query(MailingAddressDB).delete()
+    
+    db.commit()
+    
+    return {
+        "message": f"Deleted all guest data: {mailing_address_count} mailing address(es), {invitee_count} invitee(s), and {association_count} association(s)",
+        "mailing_addresses_deleted": mailing_address_count,
+        "invitees_deleted": invitee_count,
+        "associations_deleted": association_count
+    }
 

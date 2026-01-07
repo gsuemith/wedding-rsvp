@@ -4,7 +4,7 @@ from pydantic import BaseModel
 from enum import Enum
 from typing import Optional
 from uuid import UUID, uuid4
-from sqlalchemy import create_engine, Column, String, ForeignKey, Enum as SQLEnum, DateTime, Table
+from sqlalchemy import create_engine, Column, String, ForeignKey, Enum as SQLEnum, DateTime, Table, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
@@ -106,7 +106,7 @@ class MailingAddressDB(Base):
     city = Column(String, nullable=False)
     state = Column(String, nullable=False)
     postal_code = Column(String, nullable=False)
-    email = Column(String, nullable=True)
+    email = Column(String, nullable=True, unique=True)
     phone_number = Column(String, nullable=True)
     password_hash = Column(String, nullable=True)  # Hashed password for RSVP updates
 
@@ -175,6 +175,42 @@ def init_db():
             if 'password_hash' not in existing_columns:
                 conn.execute(text("ALTER TABLE mailing_addresses ADD COLUMN password_hash VARCHAR"))
                 conn.commit()
+            
+            # Add unique constraint on email if it doesn't exist
+            # First check if constraint already exists
+            constraint_exists = False
+            try:
+                result = conn.execute(text("""
+                    SELECT 1 FROM pg_constraint 
+                    WHERE conname = 'mailing_addresses_email_key'
+                """))
+                constraint_exists = result.fetchone() is not None
+            except Exception:
+                pass
+            
+            if not constraint_exists:
+                # Check for duplicate emails before adding constraint
+                try:
+                    result = conn.execute(text("""
+                        SELECT email, COUNT(*) as count 
+                        FROM mailing_addresses 
+                        WHERE email IS NOT NULL 
+                        GROUP BY email 
+                        HAVING COUNT(*) > 1
+                    """))
+                    duplicates = result.fetchall()
+                    if duplicates:
+                        # Log warning but don't fail - user will need to clean up duplicates manually
+                        print(f"WARNING: Found {len(duplicates)} duplicate email(s) in mailing_addresses. Please resolve duplicates before unique constraint can be added.")
+                        print("Duplicate emails:", [row[0] for row in duplicates])
+                    else:
+                        # No duplicates, safe to add constraint
+                        conn.execute(text("ALTER TABLE mailing_addresses ADD CONSTRAINT mailing_addresses_email_key UNIQUE (email)"))
+                        conn.commit()
+                except Exception as e:
+                    # Constraint might already exist or other error
+                    conn.rollback()
+                    pass
     
     # Migrate rsvp_response from wedding_invitees to event_invitee_association
     # First, handle wedding_invitees table - make rsvp_response nullable (we no longer use it)

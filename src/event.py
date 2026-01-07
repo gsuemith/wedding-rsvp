@@ -273,8 +273,8 @@ async def clear_event_guests(
     db: Session = Depends(get_db)
 ):
     """
-    Remove all guests (invitees) linked to an event and all its sub-events.
-    This removes the association between the event/sub-events and invitees, but does not delete the invitees themselves.
+    Delete all guests (invitees) and their mailing addresses linked to an event and all its sub-events.
+    This deletes the associations, invitees, and mailing addresses.
     """
     # Find the event
     event = db.query(EventDB).filter(EventDB.id == event_id).first()
@@ -288,30 +288,53 @@ async def clear_event_guests(
     # Get all sub-events
     sub_events = db.query(EventDB).filter(EventDB.part_of == event_id).all()
     
-    # Get count of invitees before clearing (main event)
-    invitee_count = len(event.invitee_associations)
+    # Collect all event IDs (main event + sub-events)
+    all_event_ids = [event_id] + [sub_event.id for sub_event in sub_events]
     
-    # Clear the associations for the main event (removes entries from junction table)
-    for assoc in event.invitee_associations:
+    # Get all invitee IDs associated with these events
+    associations = db.query(EventInviteeAssociation).filter(
+        EventInviteeAssociation.event_id.in_(all_event_ids)
+    ).all()
+    
+    invitee_ids = list(set([assoc.invitee_id for assoc in associations]))
+    
+    # Get all invitees
+    invitees = db.query(WeddingInviteeDB).filter(
+        WeddingInviteeDB.id.in_(invitee_ids)
+    ).all() if invitee_ids else []
+    
+    # Get all mailing address IDs
+    mailing_address_ids = list(set([inv.mailing_address_id for inv in invitees]))
+    
+    # Get counts before deletion
+    association_count = len(associations)
+    invitee_count = len(invitees)
+    mailing_address_count = len(mailing_address_ids)
+    
+    # Delete associations first (due to foreign key constraints)
+    for assoc in associations:
         db.delete(assoc)
     
-    # Clear associations for all sub-events
-    sub_event_guests_removed = 0
-    for sub_event in sub_events:
-        sub_event_guests_removed += len(sub_event.invitee_associations)
-        for assoc in sub_event.invitee_associations:
-            db.delete(assoc)
+    # Delete invitees
+    for invitee in invitees:
+        db.delete(invitee)
+    
+    # Delete mailing addresses
+    if mailing_address_ids:
+        mailing_addresses = db.query(MailingAddressDB).filter(
+            MailingAddressDB.id.in_(mailing_address_ids)
+        ).all()
+        for mailing_address in mailing_addresses:
+            db.delete(mailing_address)
     
     db.commit()
     
-    total_guests_removed = invitee_count + sub_event_guests_removed
-    
     return {
-        "message": f"Removed {invitee_count} guest(s) from event {event_id} and {sub_event_guests_removed} guest(s) from {len(sub_events)} sub-event(s)",
+        "message": f"Deleted {invitee_count} guest(s) and {mailing_address_count} mailing address(es) from event {event_id} and {len(sub_events)} sub-event(s)",
         "event_id": str(event_id),
-        "guests_removed": total_guests_removed,
-        "main_event_guests_removed": invitee_count,
-        "sub_events_guests_removed": sub_event_guests_removed,
+        "associations_deleted": association_count,
+        "invitees_deleted": invitee_count,
+        "mailing_addresses_deleted": mailing_address_count,
         "sub_events_cleared": len(sub_events)
     }
 
