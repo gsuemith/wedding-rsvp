@@ -345,7 +345,7 @@ async def get_guest_rsvp_info(request: GuestRSVPInfoRequest, db: Session = Depen
     # Get associations for this event and address
     associations = db.query(EventInviteeAssociation).filter(
         EventInviteeAssociation.event_id == request.event_id,
-        EventInviteeAssociation.invitee_id.in_(address_i nvitee_ids)
+        EventInviteeAssociation.invitee_id.in_(address_invitee_ids)
     ).all()
     
     logger.info(f"Associations found for event {request.event_id}: {len(associations)}")
