@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from typing import List
+from typing import List, Optional
 from uuid import UUID
 from sqlalchemy.orm import Session
 
@@ -12,6 +12,7 @@ from .main import (
     EventInviteeAssociation,
     RSVPResponse,
     WeddingInvitee,
+    MailingAddress,
 )
 from .utils import sanitize_phone_number, verify_password
 
@@ -20,10 +21,23 @@ from .utils import sanitize_phone_number, verify_password
 class InviteeRSVPUpdate(BaseModel):
     invitee_id: UUID
     rsvp_response: RSVPResponse
+    name: Optional[str] = None  # Optional name update for the invitee
+
+
+class MailingAddressUpdate(BaseModel):
+    """Model for updating mailing address fields. All fields are optional."""
+    address_line_1: Optional[str] = None
+    address_line_2: Optional[str] = None
+    city: Optional[str] = None
+    state: Optional[str] = None
+    postal_code: Optional[str] = None
+    email: Optional[str] = None
+    phone_number: Optional[str] = None
 
 
 class RSVPRequest(BaseModel):
     mailing_address_id: UUID
+    mailing_address: Optional[MailingAddressUpdate] = None
     event_id: UUID
     invitees: List[InviteeRSVPUpdate]
 
@@ -89,6 +103,19 @@ async def update_rsvps(request: RSVPRequest, db: Session = Depends(get_db)):
             detail=f"Mailing address with id {request.mailing_address_id} not found"
         )
     
+    # Update mailing address if provided (only update fields that are not None)
+    if request.mailing_address is not None:
+        mailing_address.address_line_1 = request.mailing_address.address_line_1 or mailing_address.address_line_1
+        mailing_address.address_line_2 = request.mailing_address.address_line_2 or mailing_address.address_line_2
+        mailing_address.city = request.mailing_address.city or mailing_address.city
+        mailing_address.state = request.mailing_address.state or mailing_address.state
+        mailing_address.postal_code = request.mailing_address.postal_code or mailing_address.postal_code
+        mailing_address.email = request.mailing_address.email or mailing_address.email
+        # Sanitize phone number if provided, otherwise keep existing value
+        if request.mailing_address.phone_number is not None:
+            mailing_address.phone_number = sanitize_phone_number(request.mailing_address.phone_number)
+        # Note: password_hash is NOT updated via this endpoint
+    
     # Update each invitee's RSVP response for this event
     updated_associations = []
     for invitee_update in request.invitees:
@@ -113,6 +140,11 @@ async def update_rsvps(request: RSVPRequest, db: Session = Depends(get_db)):
         
         # Update the RSVP response in the association
         association.rsvp_response = invitee_update.rsvp_response
+        
+        # Update the invitee's name if provided
+        if invitee_update.name is not None:
+            association.invitee.full_name = invitee_update.name
+        
         updated_associations.append(association)
     
     # Commit all changes
@@ -211,6 +243,11 @@ async def update_rsvp_by_guest_info(
         
         # Update the RSVP response in the association
         association.rsvp_response = invitee_update.rsvp_response
+        
+        # Update the invitee's name if provided
+        if invitee_update.name is not None:
+            association.invitee.full_name = invitee_update.name
+        
         updated_associations.append(association)
     
     # Commit all changes
