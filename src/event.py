@@ -12,6 +12,7 @@ from .main import (
     EventInviteeAssociation,
     RSVPResponse,
     WeddingInvitee,
+    MailingAddress,
 )
 
 
@@ -379,3 +380,118 @@ async def get_event_guests(
     ]
     
     return invitees_response
+
+
+@router.get("/event/{event_id}/guest-list")
+async def get_event_guest_list(
+    event_id: UUID,
+    db: Session = Depends(get_db)
+) -> List:
+    """
+    Get a list of GuestDetailResponse for every guest (mailing address) at an event.
+    Each response includes the guest's name, mailing address, and all events they're attending.
+    """
+    # Import here to avoid circular imports
+    from .guest import GuestDetailResponse, EventWithGuests
+    
+    # Find the event
+    event = db.query(EventDB).filter(EventDB.id == event_id).first()
+    
+    if not event:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Event with id {event_id} not found"
+        )
+    
+    # Get all associations for this event
+    associations = db.query(EventInviteeAssociation).filter(
+        EventInviteeAssociation.event_id == event_id
+    ).all()
+    
+    # Group invitees by mailing address ID
+    mailing_address_map = {}
+    for assoc in associations:
+        invitee = assoc.invitee
+        mailing_address_id = invitee.mailing_address_id
+        
+        if mailing_address_id not in mailing_address_map:
+            mailing_address_map[mailing_address_id] = {
+                'mailing_address': invitee.mailing_address_ref,
+                'invitees': []
+            }
+        mailing_address_map[mailing_address_id]['invitees'].append(invitee)
+    
+    # Build GuestDetailResponse for each unique mailing address
+    guest_list = []
+    for mailing_address_id, data in mailing_address_map.items():
+        mailing_address = data['mailing_address']
+        invitees = data['invitees']
+        
+        # Use the first invitee for full_name
+        first_invitee = invitees[0]
+        
+        # Build mailing address response
+        mailing_address_response = MailingAddress(
+            id=mailing_address.id,
+            address_line_1=mailing_address.address_line_1,
+            address_line_2=mailing_address.address_line_2,
+            city=mailing_address.city,
+            state=mailing_address.state,
+            postal_code=mailing_address.postal_code,
+            email=mailing_address.email,
+            phone_number=mailing_address.phone_number,
+        )
+        
+        # Get all events all invitees at this address are attending
+        invitee_ids = [inv.id for inv in invitees]
+        all_event_associations = db.query(EventInviteeAssociation).filter(
+            EventInviteeAssociation.invitee_id.in_(invitee_ids)
+        ).all()
+        
+        # Build events with guests list (deduplicate by event ID)
+        events_with_guests = []
+        seen_event_ids = set()
+        for assoc in all_event_associations:
+            event_obj = assoc.event
+            
+            # Skip if we've already processed this event
+            if event_obj.id in seen_event_ids:
+                continue
+            seen_event_ids.add(event_obj.id)
+            
+            # Find all invitees with the same mailing address who are also in this event
+            same_address_associations = db.query(EventInviteeAssociation).filter(
+                EventInviteeAssociation.event_id == event_obj.id
+            ).join(WeddingInviteeDB, EventInviteeAssociation.invitee_id == WeddingInviteeDB.id).filter(
+                WeddingInviteeDB.mailing_address_id == mailing_address_id
+            ).all()
+            
+            # Convert to response models
+            guests_response = [
+                WeddingInvitee(
+                    id=inv_assoc.invitee.id,
+                    full_name=inv_assoc.invitee.full_name,
+                    mailing_address=inv_assoc.invitee.mailing_address_id,
+                    rsvp_response=inv_assoc.rsvp_response,
+                )
+                for inv_assoc in same_address_associations
+            ]
+            
+            events_with_guests.append(
+                EventWithGuests(
+                    id=event_obj.id,
+                    name=event_obj.name,
+                    date=event_obj.date,
+                    guests=guests_response,
+                )
+            )
+        
+        guest_list.append(
+            GuestDetailResponse(
+                full_name=first_invitee.full_name,
+                mailing_address=mailing_address_response,
+                events=events_with_guests,
+            )
+        )
+    
+    return guest_list
