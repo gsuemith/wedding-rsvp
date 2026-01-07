@@ -117,41 +117,68 @@ async def update_rsvps(request: RSVPRequest, db: Session = Depends(get_db)):
             mailing_address.phone_number = sanitize_phone_number(request.mailing_address.phone_number)
         # Note: password_hash is NOT updated via this endpoint
     
+    # Determine the main event (if current event is a sub-event, use parent; otherwise use current event)
+    main_event_id = event.part_of if event.part_of is not None else request.event_id
+    
     # Update each invitee's RSVP response for this event
     updated_associations = []
     for invitee_update in request.invitees:
         if invitee_update.invitee_id is None:
-            # Create a new invitee
+            # Create a new invitee or use existing one with same name in main event
             if invitee_update.name is None:
                 raise HTTPException(
                     status_code=400,
                     detail="name is required when creating a new invitee (invitee_id is None)"
                 )
             
-            # Create the new invitee
-            new_invitee = WeddingInviteeDB(
-                full_name=invitee_update.name,
-                mailing_address_id=request.mailing_address_id,
-            )
-            db.add(new_invitee)
-            db.flush()  # Flush to get the ID
+            # Check if an invitee with this name already exists in the main event
+            existing_invitee = None
+            main_event_associations = db.query(EventInviteeAssociation).filter(
+                EventInviteeAssociation.event_id == main_event_id
+            ).join(WeddingInviteeDB).filter(
+                WeddingInviteeDB.full_name == invitee_update.name,
+                WeddingInviteeDB.mailing_address_id == request.mailing_address_id
+            ).first()
             
-            # Create association for the requested event
-            association = EventInviteeAssociation(
-                event_id=request.event_id,
-                invitee_id=new_invitee.id,
-                rsvp_response=invitee_update.rsvp_response,
-            )
-            db.add(association)
-            
-            # If the event is a sub-event, also create a "yes" RSVP for the main event
-            if event.part_of is not None:
-                main_event_association = EventInviteeAssociation(
-                    event_id=event.part_of,
-                    invitee_id=new_invitee.id,
-                    rsvp_response=RSVPResponse.YES,
+            if main_event_associations:
+                # Use existing invitee
+                existing_invitee = main_event_associations.invitee
+            else:
+                # Create a new invitee
+                new_invitee = WeddingInviteeDB(
+                    full_name=invitee_update.name,
+                    mailing_address_id=request.mailing_address_id,
                 )
-                db.add(main_event_association)
+                db.add(new_invitee)
+                db.flush()  # Flush to get the ID
+                existing_invitee = new_invitee
+                
+                # If the event is a sub-event, also create a "yes" RSVP for the main event
+                if event.part_of is not None:
+                    main_event_association = EventInviteeAssociation(
+                        event_id=event.part_of,
+                        invitee_id=existing_invitee.id,
+                        rsvp_response=RSVPResponse.YES,
+                    )
+                    db.add(main_event_association)
+            
+            # Check if association already exists for the requested event
+            association = db.query(EventInviteeAssociation).filter(
+                EventInviteeAssociation.event_id == request.event_id,
+                EventInviteeAssociation.invitee_id == existing_invitee.id
+            ).first()
+            
+            if association:
+                # Update existing association
+                association.rsvp_response = invitee_update.rsvp_response
+            else:
+                # Create new association for the requested event
+                association = EventInviteeAssociation(
+                    event_id=request.event_id,
+                    invitee_id=existing_invitee.id,
+                    rsvp_response=invitee_update.rsvp_response,
+                )
+                db.add(association)
             
             updated_associations.append(association)
         else:
