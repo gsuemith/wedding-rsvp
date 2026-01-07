@@ -28,7 +28,7 @@ class MailingAddressInput(BaseModel):
     postal_code: str
     email: Optional[str] = None
     phone_number: Optional[str] = None
-    password: Optional[str] = None  # Password for RSVP updates
+    password: str  # Password for RSVP updates (required)
 
 
 class GuestRequest(BaseModel):
@@ -111,9 +111,7 @@ async def create_guests(event_id: UUID, request: GuestRequest, db: Session = Dep
         )
     
     # Create mailing address
-    password_hash = None
-    if request.mailing_address.password:
-        password_hash = hash_password(request.mailing_address.password)
+    password_hash = hash_password(request.mailing_address.password)
     
     # Sanitize phone number and store it for use in response
     sanitized_phone = sanitize_phone_number(request.mailing_address.phone_number)
