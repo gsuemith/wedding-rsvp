@@ -19,9 +19,9 @@ from .utils import sanitize_phone_number, verify_password
 
 # Request/Response Models
 class InviteeRSVPUpdate(BaseModel):
-    invitee_id: UUID
+    invitee_id: Optional[UUID] = None  # Optional - if None, create a new invitee
     rsvp_response: RSVPResponse
-    name: Optional[str] = None  # Optional name update for the invitee
+    name: Optional[str] = None  # Required if invitee_id is None, optional for updates
 
 
 class MailingAddressUpdate(BaseModel):
@@ -119,33 +119,69 @@ async def update_rsvps(request: RSVPRequest, db: Session = Depends(get_db)):
     # Update each invitee's RSVP response for this event
     updated_associations = []
     for invitee_update in request.invitees:
-        # Find the association
-        association = db.query(EventInviteeAssociation).filter(
-            EventInviteeAssociation.event_id == request.event_id,
-            EventInviteeAssociation.invitee_id == invitee_update.invitee_id
-        ).first()
-        
-        if not association:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Invitee {invitee_update.invitee_id} is not associated with event {request.event_id}"
+        if invitee_update.invitee_id is None:
+            # Create a new invitee
+            if invitee_update.name is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail="name is required when creating a new invitee (invitee_id is None)"
+                )
+            
+            # Create the new invitee
+            new_invitee = WeddingInviteeDB(
+                full_name=invitee_update.name,
+                mailing_address_id=request.mailing_address_id,
             )
-        
-        # Verify invitee belongs to the specified mailing address
-        if association.invitee.mailing_address_id != request.mailing_address_id:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Invitee {invitee_update.invitee_id} does not belong to mailing address {request.mailing_address_id}"
+            db.add(new_invitee)
+            db.flush()  # Flush to get the ID
+            
+            # Create association for the requested event
+            association = EventInviteeAssociation(
+                event_id=request.event_id,
+                invitee_id=new_invitee.id,
+                rsvp_response=invitee_update.rsvp_response,
             )
-        
-        # Update the RSVP response in the association
-        association.rsvp_response = invitee_update.rsvp_response
-        
-        # Update the invitee's name if provided
-        if invitee_update.name is not None:
-            association.invitee.full_name = invitee_update.name
-        
-        updated_associations.append(association)
+            db.add(association)
+            
+            # If the event is a sub-event, also create a "yes" RSVP for the main event
+            if event.part_of is not None:
+                main_event_association = EventInviteeAssociation(
+                    event_id=event.part_of,
+                    invitee_id=new_invitee.id,
+                    rsvp_response=RSVPResponse.YES,
+                )
+                db.add(main_event_association)
+            
+            updated_associations.append(association)
+        else:
+            # Update existing invitee
+            # Find the association
+            association = db.query(EventInviteeAssociation).filter(
+                EventInviteeAssociation.event_id == request.event_id,
+                EventInviteeAssociation.invitee_id == invitee_update.invitee_id
+            ).first()
+            
+            if not association:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Invitee {invitee_update.invitee_id} is not associated with event {request.event_id}"
+                )
+            
+            # Verify invitee belongs to the specified mailing address
+            if association.invitee.mailing_address_id != request.mailing_address_id:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Invitee {invitee_update.invitee_id} does not belong to mailing address {request.mailing_address_id}"
+                )
+            
+            # Update the RSVP response in the association
+            association.rsvp_response = invitee_update.rsvp_response
+            
+            # Update the invitee's name if provided
+            if invitee_update.name is not None:
+                association.invitee.full_name = invitee_update.name
+            
+            updated_associations.append(association)
     
     # Commit all changes
     db.commit()
