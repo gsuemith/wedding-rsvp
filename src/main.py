@@ -287,7 +287,7 @@ app.add_middleware(
         "https://carlosandelizabeth2026.com",
         "https://www.carlosandelizabeth2026.com",
     ],
-    allow_origin_regex=r"https?://.*\.elizabethandcarlos2026\.netlify\.app",
+    allow_origin_regex=r"https?://.*elizabethandcarlos2026\.netlify\.app",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
