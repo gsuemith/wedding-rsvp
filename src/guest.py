@@ -499,6 +499,111 @@ async def get_guest_rsvp_info(request: GuestRSVPInfoRequest, db: Session = Depen
     )
 
 
+@router.delete("/guest/{guest_id}")
+async def delete_guest(guest_id: UUID, db: Session = Depends(get_db)):
+    """
+    Delete a guest. If guest_id is a mailing address ID, delete all invitees at that address
+    and all their event associations. If guest_id is an invitee ID, delete just that invitee
+    and all its event associations. If no guests remain for the mailing address, delete the mailing address.
+    """
+    # First check if guest_id is a mailing address ID
+    mailing_address = db.query(MailingAddressDB).filter(MailingAddressDB.id == guest_id).first()
+    
+    if mailing_address:
+        # Delete all invitees at this mailing address
+        invitees = db.query(WeddingInviteeDB).filter(
+            WeddingInviteeDB.mailing_address_id == guest_id
+        ).all()
+        
+        if not invitees:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No invitees found for mailing address {guest_id}"
+            )
+        
+        invitee_ids = [inv.id for inv in invitees]
+        
+        # Get all associations for these invitees
+        associations = db.query(EventInviteeAssociation).filter(
+            EventInviteeAssociation.invitee_id.in_(invitee_ids)
+        ).all()
+        
+        # Get counts before deletion
+        association_count = len(associations)
+        invitee_count = len(invitees)
+        
+        # Delete associations first (due to foreign key constraints)
+        for assoc in associations:
+            db.delete(assoc)
+        
+        # Delete invitees
+        for invitee in invitees:
+            db.delete(invitee)
+        
+        # Delete mailing address
+        db.delete(mailing_address)
+        
+        db.commit()
+        
+        return {
+            "message": f"Deleted mailing address {guest_id} with {invitee_count} invitee(s) and {association_count} association(s)",
+            "mailing_address_deleted": True,
+            "invitees_deleted": invitee_count,
+            "associations_deleted": association_count
+        }
+    else:
+        # Try to find by invitee ID
+        invitee = db.query(WeddingInviteeDB).filter(WeddingInviteeDB.id == guest_id).first()
+        
+        if not invitee:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Guest with id {guest_id} not found (checked as both invitee ID and mailing address ID)"
+            )
+        
+        mailing_address_id = invitee.mailing_address_id
+        
+        # Get all associations for this invitee
+        associations = db.query(EventInviteeAssociation).filter(
+            EventInviteeAssociation.invitee_id == guest_id
+        ).all()
+        
+        # Get counts before deletion
+        association_count = len(associations)
+        
+        # Delete associations first (due to foreign key constraints)
+        for assoc in associations:
+            db.delete(assoc)
+        
+        # Delete the invitee
+        db.delete(invitee)
+        
+        # Check if any other invitees remain at this mailing address
+        remaining_invitees = db.query(WeddingInviteeDB).filter(
+            WeddingInviteeDB.mailing_address_id == mailing_address_id
+        ).count()
+        
+        mailing_address_deleted = False
+        if remaining_invitees == 0:
+            # No other invitees remain, delete the mailing address
+            mailing_address = db.query(MailingAddressDB).filter(
+                MailingAddressDB.id == mailing_address_id
+            ).first()
+            if mailing_address:
+                db.delete(mailing_address)
+                mailing_address_deleted = True
+        
+        db.commit()
+        
+        return {
+            "message": f"Deleted invitee {guest_id} with {association_count} association(s)" + 
+                      (f" and mailing address {mailing_address_id}" if mailing_address_deleted else ""),
+            "invitee_deleted": True,
+            "associations_deleted": association_count,
+            "mailing_address_deleted": mailing_address_deleted
+        }
+
+
 @router.delete("/guest/all")
 async def delete_all_guests(db: Session = Depends(get_db)):
     """
