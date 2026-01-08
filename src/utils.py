@@ -3,6 +3,7 @@ import logging
 import html
 import os
 import requests
+import json
 from typing import Optional, List
 from passlib.context import CryptContext
 
@@ -100,20 +101,14 @@ def send_confirmation_email(email: str, invitee_names: List[str], phone_number: 
         # Format phone number for display
         phone_display = phone_number if phone_number else "Not provided"
         
-        # Build email message
-        message_text = f"""Dear {names_text},
-
-We have received your RSVP to our wedding! We are so grateful that you would share our special day with us.
-
-You can check and even edit your RSVP at www.carlosandelizabeth2026.com.  Check there also for the most up to date information as we get closer to July 17th.  
-
-Muchas Gracias,
-Carlos and Elizabeth
-
-Your RSVP Email: {email}
-Your RSVP Phone Number: {phone_display}"""
+        # Prepare template variables as JSON
+        template_variables = {
+            "names_text": names_text,
+            "email": email,
+            "phone_number": phone_display
+        }
         
-        # Send email via Mailgun
+        # Send email via Mailgun using template
         response = requests.post(
             "https://api.mailgun.net/v3/carlosandelizabeth2026.com/messages",
             auth=("api", api_key),
@@ -121,7 +116,8 @@ Your RSVP Phone Number: {phone_display}"""
                 "from": "TheBrideAndGroom@carlosandelizabeth2026.com",
                 "to": email,
                 "subject": "RSVP Confirmation - Carlos & Elizabeth's Wedding",
-                "text": message_text
+                "template": "base template",
+                "h:X-Mailgun-Variables": json.dumps(template_variables)
             },
             timeout=10  # 10 second timeout
         )
