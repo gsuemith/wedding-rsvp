@@ -5,6 +5,7 @@ from uuid import UUID
 from datetime import datetime
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy import func
 import logging
 
 from .main import (
@@ -119,13 +120,16 @@ async def create_guests(event_id: UUID, request: GuestRequest, db: Session = Dep
     # Sanitize phone number and store it for use in response
     sanitized_phone = sanitize_phone_number(request.mailing_address.phone_number)
     
+    # Store email in lowercase
+    email_lower = request.mailing_address.email.lower() if request.mailing_address.email else None
+    
     mailing_address_db = MailingAddressDB(
         address_line_1=request.mailing_address.address_line_1,
         address_line_2=request.mailing_address.address_line_2,
         city=request.mailing_address.city,
         state=request.mailing_address.state,
         postal_code=request.mailing_address.postal_code,
-        email=request.mailing_address.email,
+        email=email_lower,
         phone_number=sanitized_phone,
         password_hash=password_hash,
     )
@@ -363,9 +367,9 @@ async def get_guest_rsvp_info(request: GuestRSVPInfoRequest, db: Session = Depen
     # Sanitize phone number
     sanitized_phone = sanitize_phone_number(request.phone_number)
     
-    # Find mailing address by email and phone number
+    # Find mailing address by email and phone number (case-insensitive email comparison)
     mailing_address = db.query(MailingAddressDB).filter(
-        MailingAddressDB.email == request.email,
+        func.lower(MailingAddressDB.email) == request.email.lower(),
         MailingAddressDB.phone_number == sanitized_phone
     ).first()
     
@@ -606,16 +610,23 @@ async def delete_guest(guest_id: UUID, db: Session = Depends(get_db)):
 
 @router.delete("/guest")
 async def delete_guest_by_email(
-    email: str = Query(..., description="Email address of the mailing address to delete"),
+    email: Optional[str] = Query(None, description="Email address of the mailing address to delete"),
     db: Session = Depends(get_db)
 ):
     """
     Delete a guest by email address.
     Deletes the mailing address, all invitees at that address, and all their RSVP associations.
     """
-    # Find mailing address by email
+    # Check if email is provided
+    if not email:
+        raise HTTPException(
+            status_code=403,
+            detail="Email parameter is required"
+        )
+    
+    # Find mailing address by email (case-insensitive comparison)
     mailing_address = db.query(MailingAddressDB).filter(
-        MailingAddressDB.email == email
+        func.lower(MailingAddressDB.email) == email.lower()
     ).first()
     
     if not mailing_address:

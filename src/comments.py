@@ -4,6 +4,7 @@ from typing import List, Optional
 from uuid import UUID
 from datetime import datetime
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 from sqlalchemy import desc
 import os
 
@@ -77,9 +78,9 @@ async def authenticate_for_comments(request: CommentAuthRequest, db: Session = D
     Authenticate a user with email and password.
     Returns mailing_address_id and list of invitees associated with that address.
     """
-    # Find mailing address by email
+    # Find mailing address by email (case-insensitive comparison)
     mailing_address = db.query(MailingAddressDB).filter(
-        MailingAddressDB.email == request.email
+        func.lower(MailingAddressDB.email) == request.email.lower()
     ).first()
     
     if not mailing_address:

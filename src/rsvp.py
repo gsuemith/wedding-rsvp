@@ -3,6 +3,7 @@ from pydantic import BaseModel
 from typing import List, Optional
 from uuid import UUID
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 
 from .main import (
@@ -111,7 +112,9 @@ async def update_rsvps(request: RSVPRequest, db: Session = Depends(get_db)):
         mailing_address.city = request.mailing_address.city or mailing_address.city
         mailing_address.state = request.mailing_address.state or mailing_address.state
         mailing_address.postal_code = request.mailing_address.postal_code or mailing_address.postal_code
-        mailing_address.email = request.mailing_address.email or mailing_address.email
+        # Store email in lowercase if provided
+        if request.mailing_address.email:
+            mailing_address.email = request.mailing_address.email.lower()
         # Sanitize phone number if provided, otherwise keep existing value
         if request.mailing_address.phone_number is not None:
             mailing_address.phone_number = sanitize_phone_number(request.mailing_address.phone_number)
@@ -264,9 +267,9 @@ async def update_rsvp_by_guest_info(
     # Sanitize phone number
     sanitized_phone = sanitize_phone_number(request.phone_number)
     
-    # Find mailing address by email and phone number
+    # Find mailing address by email and phone number (case-insensitive email comparison)
     mailing_address = db.query(MailingAddressDB).filter(
-        MailingAddressDB.email == request.email,
+        func.lower(MailingAddressDB.email) == request.email.lower(),
         MailingAddressDB.phone_number == sanitized_phone
     ).first()
     
