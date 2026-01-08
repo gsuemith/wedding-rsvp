@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from typing import List, Optional
 from uuid import UUID
@@ -602,6 +602,76 @@ async def delete_guest(guest_id: UUID, db: Session = Depends(get_db)):
             "associations_deleted": association_count,
             "mailing_address_deleted": mailing_address_deleted
         }
+
+
+@router.delete("/guest")
+async def delete_guest_by_email(
+    email: str = Query(..., description="Email address of the mailing address to delete"),
+    db: Session = Depends(get_db)
+):
+    """
+    Delete a guest by email address.
+    Deletes the mailing address, all invitees at that address, and all their RSVP associations.
+    """
+    # Find mailing address by email
+    mailing_address = db.query(MailingAddressDB).filter(
+        MailingAddressDB.email == email
+    ).first()
+    
+    if not mailing_address:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No mailing address found with email {email}"
+        )
+    
+    # Get all invitees at this mailing address
+    invitees = db.query(WeddingInviteeDB).filter(
+        WeddingInviteeDB.mailing_address_id == mailing_address.id
+    ).all()
+    
+    if not invitees:
+        # No invitees, just delete the mailing address
+        db.delete(mailing_address)
+        db.commit()
+        
+        return {
+            "message": f"Deleted mailing address with email {email} (no invitees found)",
+            "mailing_address_deleted": True,
+            "invitees_deleted": 0,
+            "associations_deleted": 0
+        }
+    
+    invitee_ids = [inv.id for inv in invitees]
+    
+    # Get all associations for these invitees
+    associations = db.query(EventInviteeAssociation).filter(
+        EventInviteeAssociation.invitee_id.in_(invitee_ids)
+    ).all()
+    
+    # Get counts before deletion
+    association_count = len(associations)
+    invitee_count = len(invitees)
+    
+    # Delete associations first (due to foreign key constraints)
+    for assoc in associations:
+        db.delete(assoc)
+    
+    # Delete invitees
+    for invitee in invitees:
+        db.delete(invitee)
+    
+    # Delete mailing address
+    db.delete(mailing_address)
+    
+    db.commit()
+    
+    return {
+        "message": f"Deleted mailing address with email {email}: {invitee_count} invitee(s) and {association_count} association(s)",
+        "email": email,
+        "mailing_address_deleted": True,
+        "invitees_deleted": invitee_count,
+        "associations_deleted": association_count
+    }
 
 
 @router.delete("/guest/all")
