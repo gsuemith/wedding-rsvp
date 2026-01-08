@@ -8,6 +8,7 @@ from sqlalchemy import create_engine, Column, String, ForeignKey, Enum as SQLEnu
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
+from datetime import datetime
 import os
 from dotenv import load_dotenv
 
@@ -122,6 +123,7 @@ class WeddingInviteeDB(Base):
 
     mailing_address_ref = relationship("MailingAddressDB", back_populates="invitees")
     event_associations = relationship("EventInviteeAssociation", back_populates="invitee")
+    comments = relationship("CommentDB", back_populates="invitee")
 
 
 # Association model for events and invitees (many-to-many with rsvp_response)
@@ -145,6 +147,17 @@ class EventDB(Base):
     part_of = Column(PGUUID(as_uuid=True), ForeignKey("events.id"), nullable=True)
 
     invitee_associations = relationship("EventInviteeAssociation", back_populates="event")
+
+
+class CommentDB(Base):
+    __tablename__ = "comments"
+
+    id = Column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
+    invitee_id = Column(PGUUID(as_uuid=True), ForeignKey("wedding_invitees.id"), nullable=False)
+    message_text = Column(String, nullable=False)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+    invitee = relationship("WeddingInviteeDB", back_populates="comments")
 
 
 # Create tables
@@ -297,10 +310,12 @@ app.add_middleware(
 from .guest import router as guest_router
 from .rsvp import router as rsvp_router
 from .event import router as event_router
+from .comments import router as comments_router
 
 app.include_router(guest_router)
 app.include_router(rsvp_router)
 app.include_router(event_router)
+app.include_router(comments_router)
 
 
 @app.on_event("startup")

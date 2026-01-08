@@ -1,5 +1,6 @@
 import re
 import logging
+import html
 from typing import Optional
 from passlib.context import CryptContext
 
@@ -40,4 +41,35 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
     result = pwd_context.verify(plain_password, hashed_password)
     logger.info(f"Password verification result: {result}")
     return result
+
+
+def sanitize_message_text(text: str) -> str:
+    """
+    Sanitize message text to prevent XSS while allowing emojis and reasonable characters.
+    - Escapes HTML/XML special characters
+    - Allows emojis and unicode characters
+    - Removes script tags and dangerous patterns
+    - Limits length to prevent abuse
+    """
+    if not text:
+        return ""
+    
+    # Limit message length (e.g., 500 characters)
+    text = text[:500]
+    
+    # Remove null bytes and control characters (except newlines, tabs, carriage returns)
+    text = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', text)
+    
+    # Escape HTML/XML special characters to prevent XSS
+    text = html.escape(text)
+    
+    # Allow newlines and tabs back (they were escaped, but we want them)
+    text = text.replace('&#x0A;', '\n').replace('&#x09;', '\t')
+    
+    # Remove any remaining script-like patterns (case insensitive)
+    text = re.sub(r'&lt;script.*?&gt;.*?&lt;/script&gt;', '', text, flags=re.IGNORECASE | re.DOTALL)
+    text = re.sub(r'javascript:', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'on\w+\s*=', '', text, flags=re.IGNORECASE)  # Remove event handlers like onclick=
+    
+    return text.strip()
 
