@@ -1,7 +1,9 @@
 import re
 import logging
 import html
-from typing import Optional
+import os
+import requests
+from typing import Optional, List
 from passlib.context import CryptContext
 
 # Password hashing context
@@ -72,4 +74,66 @@ def sanitize_message_text(text: str) -> str:
     text = re.sub(r'on\w+\s*=', '', text, flags=re.IGNORECASE)  # Remove event handlers like onclick=
     
     return text.strip()
+
+
+def send_confirmation_email(email: str, invitee_names: List[str], phone_number: Optional[str]) -> bool:
+    """
+    Send a confirmation email to the guest after RSVP creation.
+    Returns True if successful, False otherwise.
+    """
+    try:
+        # Get Mailgun API key from environment
+        api_key = os.getenv('MAIL_GUN_API_KEY')
+        if not api_key:
+            logger.warning("MAIL_GUN_API_KEY not set, skipping email send")
+            return False
+        
+        # Format invitee names
+        if len(invitee_names) == 1:
+            names_text = invitee_names[0]
+        elif len(invitee_names) == 2:
+            names_text = f"{invitee_names[0]} and {invitee_names[1]}"
+        else:
+            # Multiple names: "Name1, Name2, and Name3"
+            names_text = ", ".join(invitee_names[:-1]) + f", and {invitee_names[-1]}"
+        
+        # Format phone number for display
+        phone_display = phone_number if phone_number else "Not provided"
+        
+        # Build email message
+        message_text = f"""Dear {names_text},
+
+We have received your RSVP to our wedding! We are so grateful that you would share our special day with us.
+
+You can check and even edit your RSVP at www.carlosandelizabeth2026.com.  Check there also for the most up to date information as we get closer to July 17th.  
+
+Muchas Gracias,
+Carlos and Elizabeth
+
+Your RSVP Email: {email}
+Your RSVP Phone Number: {phone_display}"""
+        
+        # Send email via Mailgun
+        response = requests.post(
+            "https://api.mailgun.net/v3/carlosandelizabeth2026.com/messages",
+            auth=("api", api_key),
+            data={
+                "from": "TheBrideAndGroom@carlosandelizabeth2026.com",
+                "to": email,
+                "subject": "RSVP Confirmation - Carlos & Elizabeth's Wedding",
+                "text": message_text
+            },
+            timeout=10  # 10 second timeout
+        )
+        
+        if response.status_code == 200:
+            logger.info(f"Confirmation email sent successfully to {email}")
+            return True
+        else:
+            logger.error(f"Failed to send confirmation email to {email}: {response.status_code} - {response.text}")
+            return False
+            
+    except Exception as e:
+        logger.error(f"Error sending confirmation email to {email}: {str(e)}")
+        return False
 

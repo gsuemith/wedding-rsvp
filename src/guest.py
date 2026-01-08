@@ -5,6 +5,7 @@ from uuid import UUID
 from datetime import datetime
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
+import logging
 
 from .main import (
     SessionLocal,
@@ -16,7 +17,9 @@ from .main import (
     MailingAddress,
     WeddingInvitee,
 )
-from .utils import sanitize_phone_number, hash_password, verify_password
+from .utils import sanitize_phone_number, hash_password, verify_password, send_confirmation_email
+
+logger = logging.getLogger(__name__)
 
 
 # Request/Response Models
@@ -184,6 +187,15 @@ async def create_guests(event_id: UUID, request: GuestRequest, db: Session = Dep
                 detail=f"A mailing address with email '{request.mailing_address.email}' already exists"
             )
         raise
+
+    # Only send confirmation email if database save was successful (after commit)
+    if request.mailing_address.email:
+        invitee_names = [invitee_db.full_name for invitee_db in invitees_db]
+        send_confirmation_email(
+            email=request.mailing_address.email,
+            invitee_names=invitee_names,
+            phone_number=sanitized_phone
+        )
 
     # Refresh to ensure we have the latest data
     db.refresh(mailing_address_db)
