@@ -17,6 +17,7 @@ from .main import (
     RSVPResponse,
     MailingAddress,
     WeddingInvitee,
+    CommentDB,
 )
 from .utils import sanitize_phone_number, hash_password, verify_password, send_confirmation_email
 
@@ -527,16 +528,26 @@ async def delete_guest(guest_id: UUID, db: Session = Depends(get_db)):
         
         invitee_ids = [inv.id for inv in invitees]
         
+        # Get all comments for these invitees
+        comments = db.query(CommentDB).filter(
+            CommentDB.invitee_id.in_(invitee_ids)
+        ).all()
+        
         # Get all associations for these invitees
         associations = db.query(EventInviteeAssociation).filter(
             EventInviteeAssociation.invitee_id.in_(invitee_ids)
         ).all()
         
         # Get counts before deletion
+        comment_count = len(comments)
         association_count = len(associations)
         invitee_count = len(invitees)
         
-        # Delete associations first (due to foreign key constraints)
+        # Delete comments first (due to foreign key constraints)
+        for comment in comments:
+            db.delete(comment)
+        
+        # Delete associations (due to foreign key constraints)
         for assoc in associations:
             db.delete(assoc)
         
@@ -550,9 +561,10 @@ async def delete_guest(guest_id: UUID, db: Session = Depends(get_db)):
         db.commit()
         
         return {
-            "message": f"Deleted mailing address {guest_id} with {invitee_count} invitee(s) and {association_count} association(s)",
+            "message": f"Deleted mailing address {guest_id} with {invitee_count} invitee(s), {comment_count} comment(s), and {association_count} association(s)",
             "mailing_address_deleted": True,
             "invitees_deleted": invitee_count,
+            "comments_deleted": comment_count,
             "associations_deleted": association_count
         }
     else:
@@ -567,15 +579,25 @@ async def delete_guest(guest_id: UUID, db: Session = Depends(get_db)):
         
         mailing_address_id = invitee.mailing_address_id
         
+        # Get all comments for this invitee
+        comments = db.query(CommentDB).filter(
+            CommentDB.invitee_id == guest_id
+        ).all()
+        
         # Get all associations for this invitee
         associations = db.query(EventInviteeAssociation).filter(
             EventInviteeAssociation.invitee_id == guest_id
         ).all()
         
         # Get counts before deletion
+        comment_count = len(comments)
         association_count = len(associations)
         
-        # Delete associations first (due to foreign key constraints)
+        # Delete comments first (due to foreign key constraints)
+        for comment in comments:
+            db.delete(comment)
+        
+        # Delete associations (due to foreign key constraints)
         for assoc in associations:
             db.delete(assoc)
         
@@ -600,9 +622,10 @@ async def delete_guest(guest_id: UUID, db: Session = Depends(get_db)):
         db.commit()
         
         return {
-            "message": f"Deleted invitee {guest_id} with {association_count} association(s)" + 
+            "message": f"Deleted invitee {guest_id} with {comment_count} comment(s) and {association_count} association(s)" + 
                       (f" and mailing address {mailing_address_id}" if mailing_address_deleted else ""),
             "invitee_deleted": True,
+            "comments_deleted": comment_count,
             "associations_deleted": association_count,
             "mailing_address_deleted": mailing_address_deleted
         }
@@ -654,16 +677,26 @@ async def delete_guest_by_email(
     
     invitee_ids = [inv.id for inv in invitees]
     
+    # Get all comments for these invitees
+    comments = db.query(CommentDB).filter(
+        CommentDB.invitee_id.in_(invitee_ids)
+    ).all()
+    
     # Get all associations for these invitees
     associations = db.query(EventInviteeAssociation).filter(
         EventInviteeAssociation.invitee_id.in_(invitee_ids)
     ).all()
     
     # Get counts before deletion
+    comment_count = len(comments)
     association_count = len(associations)
     invitee_count = len(invitees)
     
-    # Delete associations first (due to foreign key constraints)
+    # Delete comments first (due to foreign key constraints)
+    for comment in comments:
+        db.delete(comment)
+    
+    # Delete associations (due to foreign key constraints)
     for assoc in associations:
         db.delete(assoc)
     
@@ -677,10 +710,11 @@ async def delete_guest_by_email(
     db.commit()
     
     return {
-        "message": f"Deleted mailing address with email {email}: {invitee_count} invitee(s) and {association_count} association(s)",
+        "message": f"Deleted mailing address with email {email}: {invitee_count} invitee(s), {comment_count} comment(s), and {association_count} association(s)",
         "email": email,
         "mailing_address_deleted": True,
         "invitees_deleted": invitee_count,
+        "comments_deleted": comment_count,
         "associations_deleted": association_count
     }
 
