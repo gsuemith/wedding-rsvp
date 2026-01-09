@@ -52,13 +52,16 @@ def sanitize_message_text(text: str) -> str:
     - Escapes HTML/XML special characters
     - Allows emojis and unicode characters
     - Removes script tags and dangerous patterns
-    - Limits length to prevent abuse
+    - Limits length to prevent abuse (configurable via MAX_COMMENT_LENGTH env var, default: 1500)
     """
     if not text:
         return ""
     
-    # Limit message length (e.g., 500 characters)
-    text = text[:500]
+    # Get comment length limit from environment variable, default to 1500
+    max_comment_length = int(os.getenv('MAX_COMMENT_LENGTH', '1500'))
+    
+    # Limit message length
+    text = text[:max_comment_length]
     
     # Remove null bytes and control characters (except newlines, tabs, carriage returns)
     text = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', text)
