@@ -13,8 +13,12 @@ from .main import (
     MailingAddressDB,
     WeddingInviteeDB,
     CommentDB,
+    EventDB,
+    EventInviteeAssociation,
+    RSVPResponse,
 )
-from .utils import verify_password, sanitize_phone_number, sanitize_message_text
+from .utils import verify_password, sanitize_phone_number, sanitize_message_text, hash_password
+from sqlalchemy.exc import IntegrityError
 
 
 # Request/Response Models
@@ -52,6 +56,23 @@ class CommentsListResponse(BaseModel):
     page_size: int
     total: int
     total_pages: int
+
+
+class NonAttendeeMailingAddressInput(BaseModel):
+    address_line_1: str
+    address_line_2: Optional[str] = None
+    city: str
+    state: str
+    postal_code: str
+    email: Optional[str] = None
+    phone_number: Optional[str] = None
+    password: str  # Password for RSVP updates (required)
+
+
+class NonAttendeeRequest(BaseModel):
+    event_id: UUID
+    name: str
+    mailing_address: NonAttendeeMailingAddressInput
 
 
 def get_db():
@@ -120,6 +141,101 @@ async def authenticate_for_comments(request: CommentAuthRequest, db: Session = D
     
     return CommentAuthResponse(
         mailing_address_id=mailing_address.id,
+        invitees=invitees_info
+    )
+
+
+@router.post("/comments/non_attendee", response_model=CommentAuthResponse)
+async def create_non_attendee(request: NonAttendeeRequest, db: Session = Depends(get_db)):
+    """
+    Create a mailing address and invitee for a non-attendee with a "no" RSVP response.
+    The event must be a main event (not a sub-event).
+    Returns the same response as /comments/auth: mailing_address_id and list of invitees.
+    """
+    # Verify event exists and is a main event (part_of must be None)
+    event = db.query(EventDB).filter(EventDB.id == request.event_id).first()
+    if not event:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Event with id {request.event_id} not found"
+        )
+    
+    if event.part_of is not None:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Event {request.event_id} is a sub-event. This endpoint only accepts main events."
+        )
+    
+    # Create mailing address
+    password_hash = hash_password(request.mailing_address.password)
+    
+    # Sanitize phone number
+    sanitized_phone = sanitize_phone_number(request.mailing_address.phone_number)
+    
+    # Store email in lowercase
+    email_lower = request.mailing_address.email.lower() if request.mailing_address.email else None
+    
+    mailing_address_db = MailingAddressDB(
+        address_line_1=request.mailing_address.address_line_1,
+        address_line_2=request.mailing_address.address_line_2,
+        city=request.mailing_address.city,
+        state=request.mailing_address.state,
+        postal_code=request.mailing_address.postal_code,
+        email=email_lower,
+        phone_number=sanitized_phone,
+        password_hash=password_hash,
+    )
+    db.add(mailing_address_db)
+    try:
+        db.flush()  # Flush to get the ID without committing
+    except IntegrityError as e:
+        db.rollback()
+        if 'mailing_addresses_email_key' in str(e.orig) or 'unique constraint' in str(e.orig).lower():
+            raise HTTPException(
+                status_code=400,
+                detail=f"A mailing address with email '{request.mailing_address.email}' already exists."
+            )
+        raise
+    
+    # Create invitee
+    invitee_db = WeddingInviteeDB(
+        full_name=request.name,
+        mailing_address_id=mailing_address_db.id,
+    )
+    db.add(invitee_db)
+    db.flush()  # Flush to get the invitee ID
+    
+    # Create association with "no" RSVP response for the main event
+    association = EventInviteeAssociation(
+        event_id=request.event_id,
+        invitee_id=invitee_db.id,
+        rsvp_response=RSVPResponse.NO,
+    )
+    db.add(association)
+    
+    # Commit all changes
+    try:
+        db.commit()
+    except IntegrityError as e:
+        db.rollback()
+        if 'mailing_addresses_email_key' in str(e.orig) or 'unique constraint' in str(e.orig).lower():
+            raise HTTPException(
+                status_code=400,
+                detail=f"A mailing address with email '{request.mailing_address.email}' already exists"
+            )
+        raise
+    
+    # Refresh to ensure we have the latest data
+    db.refresh(mailing_address_db)
+    db.refresh(invitee_db)
+    
+    # Return the same format as /comments/auth
+    invitees_info = [
+        InviteeInfo(id=invitee_db.id, name=invitee_db.full_name)
+    ]
+    
+    return CommentAuthResponse(
+        mailing_address_id=mailing_address_db.id,
         invitees=invitees_info
     )
 

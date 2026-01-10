@@ -722,15 +722,19 @@ async def delete_guest_by_email(
 @router.delete("/guest/all")
 async def delete_all_guests(db: Session = Depends(get_db)):
     """
-    Delete all mailing addresses, invitees, and their event associations.
+    Delete all mailing addresses, invitees, their event associations, and comments.
     This is a destructive operation that removes all guest data.
     """
     # Get counts before deletion
     mailing_address_count = db.query(MailingAddressDB).count()
     invitee_count = db.query(WeddingInviteeDB).count()
     association_count = db.query(EventInviteeAssociation).count()
+    comment_count = db.query(CommentDB).count()
     
-    # Delete all associations first (due to foreign key constraints)
+    # Delete all comments first (due to foreign key constraints)
+    db.query(CommentDB).delete()
+    
+    # Delete all associations (due to foreign key constraints)
     db.query(EventInviteeAssociation).delete()
     
     # Delete all invitees
@@ -742,9 +746,10 @@ async def delete_all_guests(db: Session = Depends(get_db)):
     db.commit()
     
     return {
-        "message": f"Deleted all guest data: {mailing_address_count} mailing address(es), {invitee_count} invitee(s), and {association_count} association(s)",
+        "message": f"Deleted all guest data: {mailing_address_count} mailing address(es), {invitee_count} invitee(s), {comment_count} comment(s), and {association_count} association(s)",
         "mailing_addresses_deleted": mailing_address_count,
         "invitees_deleted": invitee_count,
+        "comments_deleted": comment_count,
         "associations_deleted": association_count
     }
 
