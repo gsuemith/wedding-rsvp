@@ -8,7 +8,7 @@ from sqlalchemy import create_engine, Column, String, ForeignKey, Enum as SQLEnu
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
-from datetime import datetime
+from datetime import datetime, timezone
 import os
 from dotenv import load_dotenv
 
@@ -155,7 +155,7 @@ class CommentDB(Base):
     id = Column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
     invitee_id = Column(PGUUID(as_uuid=True), ForeignKey("wedding_invitees.id"), nullable=False)
     message_text = Column(String, nullable=False)
-    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
 
     invitee = relationship("WeddingInviteeDB", back_populates="comments")
 

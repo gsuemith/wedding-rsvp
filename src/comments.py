@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from typing import List, Optional
 from uuid import UUID
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from sqlalchemy import desc
@@ -281,23 +281,32 @@ async def post_comment(request: CommentPostRequest, db: Session = Depends(get_db
             detail="Message text cannot be empty after sanitization"
         )
     
-    # Create comment
+    # Create comment with explicit UTC timestamp
     comment = CommentDB(
         invitee_id=request.invitee_id,
         message_text=sanitized_message,
-        created_at=datetime.utcnow()
+        created_at=datetime.now(timezone.utc)
     )
     
     db.add(comment)
     db.commit()
     db.refresh(comment)
     
+    # Ensure created_at is explicitly UTC
+    created_at_utc = comment.created_at
+    if created_at_utc.tzinfo is None:
+        # If timezone-naive, assume it's UTC
+        created_at_utc = created_at_utc.replace(tzinfo=timezone.utc)
+    elif created_at_utc.tzinfo != timezone.utc:
+        # Convert to UTC if in different timezone
+        created_at_utc = created_at_utc.astimezone(timezone.utc)
+    
     return CommentResponse(
         id=comment.id,
         message_text=comment.message_text,
         invitee_id=comment.invitee_id,
         invitee_name=invitee.full_name,
-        created_at=comment.created_at
+        created_at=created_at_utc
     )
 
 
@@ -322,17 +331,27 @@ async def get_comments(
         desc(CommentDB.created_at)
     ).offset(offset).limit(page_size).all()
     
-    # Build response
-    comments_response = [
-        CommentResponse(
-            id=comment.id,
-            message_text=comment.message_text,
-            invitee_id=comment.invitee_id,
-            invitee_name=comment.invitee.full_name,
-            created_at=comment.created_at
+    # Build response with explicit UTC timestamps
+    comments_response = []
+    for comment in comments:
+        # Ensure created_at is explicitly UTC
+        created_at_utc = comment.created_at
+        if created_at_utc.tzinfo is None:
+            # If timezone-naive, assume it's UTC
+            created_at_utc = created_at_utc.replace(tzinfo=timezone.utc)
+        elif created_at_utc.tzinfo != timezone.utc:
+            # Convert to UTC if in different timezone
+            created_at_utc = created_at_utc.astimezone(timezone.utc)
+        
+        comments_response.append(
+            CommentResponse(
+                id=comment.id,
+                message_text=comment.message_text,
+                invitee_id=comment.invitee_id,
+                invitee_name=comment.invitee.full_name,
+                created_at=created_at_utc
+            )
         )
-        for comment in comments
-    ]
     
     # Calculate total pages
     total_pages = (total + page_size - 1) // page_size if total > 0 else 0
@@ -346,25 +365,46 @@ async def get_comments(
     )
 
 
-@router.delete("/comments/{comment_id}")
-async def delete_comment(comment_id: UUID, db: Session = Depends(get_db)):
+@router.delete("/comments/all/{event_id}")
+async def delete_all_comments(event_id: UUID, db: Session = Depends(get_db)):
     """
-    Delete a single comment by comment_id.
+    Delete all comments for a specific event.
+    This deletes all comments posted by invitees associated with the given event.
     """
-    comment = db.query(CommentDB).filter(CommentDB.id == comment_id).first()
+    # Verify event exists
+    event = db.query(EventDB).filter(EventDB.id == event_id).first()
     
-    if not comment:
+    if not event:
         raise HTTPException(
             status_code=404,
-            detail=f"Comment with id {comment_id} not found"
+            detail=f"Event with id {event_id} not found"
         )
     
-    db.delete(comment)
+    # Get count of comments before deletion using a join
+    comment_count = db.query(CommentDB).join(
+        EventInviteeAssociation,
+        CommentDB.invitee_id == EventInviteeAssociation.invitee_id
+    ).filter(
+        EventInviteeAssociation.event_id == event_id
+    ).count()
+    
+    # Delete all comments for invitees associated with this event
+    # Use a subquery to efficiently delete comments
+    invitee_ids_subquery = db.query(EventInviteeAssociation.invitee_id).filter(
+        EventInviteeAssociation.event_id == event_id
+    )
+    
+    db.query(CommentDB).filter(
+        CommentDB.invitee_id.in_(invitee_ids_subquery)
+    ).delete(synchronize_session=False)
+    
     db.commit()
     
     return {
-        "message": f"Comment {comment_id} deleted successfully",
-        "comment_id": str(comment_id)
+        "message": f"Deleted all {comment_count} comment(s) for event {event_id}",
+        "event_id": str(event_id),
+        "event_name": event.name,
+        "comments_deleted": comment_count
     }
 
 
@@ -405,22 +445,24 @@ async def delete_comments_by_invitee(invitee_id: UUID, db: Session = Depends(get
     }
 
 
-@router.delete("/comments/all")
-async def delete_all_comments(db: Session = Depends(get_db)):
+@router.delete("/comments/{comment_id}")
+async def delete_comment(comment_id: UUID, db: Session = Depends(get_db)):
     """
-    Delete all comments from the database.
-    This is a destructive operation that removes all comment data.
+    Delete a single comment by comment_id.
     """
-    # Get count before deletion
-    comment_count = db.query(CommentDB).count()
+    comment = db.query(CommentDB).filter(CommentDB.id == comment_id).first()
     
-    # Delete all comments
-    db.query(CommentDB).delete()
+    if not comment:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Comment with id {comment_id} not found"
+        )
     
+    db.delete(comment)
     db.commit()
     
     return {
-        "message": f"Deleted all {comment_count} comment(s) from the database",
-        "comments_deleted": comment_count
+        "message": f"Comment {comment_id} deleted successfully",
+        "comment_id": str(comment_id)
     }
 
