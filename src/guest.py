@@ -556,17 +556,24 @@ async def delete_all_guests(event_id: UUID, db: Session = Depends(get_db)):
     association_count = len(associations)
     comment_count = len(comments)
     
+    # Use bulk delete operations to avoid relationship issues
     # Delete comments first (due to foreign key constraints)
-    for comment in comments:
-        db.delete(comment)
+    if comment_count > 0:
+        db.query(CommentDB).filter(
+            CommentDB.invitee_id.in_(invitee_ids)
+        ).delete(synchronize_session=False)
     
     # Delete associations (due to foreign key constraints)
-    for assoc in associations:
-        db.delete(assoc)
+    if association_count > 0:
+        db.query(EventInviteeAssociation).filter(
+            EventInviteeAssociation.event_id == event_id
+        ).delete(synchronize_session=False)
     
     # Delete invitees
-    for invitee in invitees:
-        db.delete(invitee)
+    if invitee_count > 0:
+        db.query(WeddingInviteeDB).filter(
+            WeddingInviteeDB.id.in_(invitee_ids)
+        ).delete(synchronize_session=False)
     
     # Delete mailing addresses (only if no other invitees reference them)
     if mailing_address_ids:
@@ -577,11 +584,9 @@ async def delete_all_guests(event_id: UUID, db: Session = Depends(get_db)):
             ).count()
             
             if remaining_invitees == 0:
-                mailing_address = db.query(MailingAddressDB).filter(
+                db.query(MailingAddressDB).filter(
                     MailingAddressDB.id == mailing_address_id
-                ).first()
-                if mailing_address:
-                    db.delete(mailing_address)
+                ).delete(synchronize_session=False)
     
     db.commit()
     
