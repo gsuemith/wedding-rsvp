@@ -507,8 +507,8 @@ async def get_guest_rsvp_info(request: GuestRSVPInfoRequest, db: Session = Depen
 @router.delete("/guest/all/{event_id}")
 async def delete_all_guests(event_id: UUID, db: Session = Depends(get_db)):
     """
-    Delete all guests (invitees) associated with a specific event.
-    This deletes invitees, their event associations, comments, and mailing addresses for guests linked to the given event.
+    Delete all guests (invitees) associated with a specific event and its sub-events.
+    This deletes invitees, their event associations (including with sub-events), comments, and mailing addresses for guests linked to the given event.
     """
     # Verify event exists
     event = db.query(EventDB).filter(EventDB.id == event_id).first()
@@ -519,14 +519,21 @@ async def delete_all_guests(event_id: UUID, db: Session = Depends(get_db)):
             detail=f"Event with id {event_id} not found"
         )
     
-    # Get all invitee IDs associated with this event
-    associations = db.query(EventInviteeAssociation).filter(
-        EventInviteeAssociation.event_id == event_id
+    # Get all sub-events of this event
+    sub_events = db.query(EventDB).filter(EventDB.part_of == event_id).all()
+    sub_event_ids = [sub_event.id for sub_event in sub_events]
+    
+    # Collect all event IDs (main event + sub-events)
+    all_event_ids = [event_id] + sub_event_ids
+    
+    # Get all invitee IDs associated with this event AND its sub-events
+    associations_for_events = db.query(EventInviteeAssociation).filter(
+        EventInviteeAssociation.event_id.in_(all_event_ids)
     ).all()
     
-    if not associations:
+    if not associations_for_events:
         return {
-            "message": f"No guests found for event {event_id}",
+            "message": f"No guests found for event {event_id} and its sub-events",
             "event_id": str(event_id),
             "event_name": event.name,
             "mailing_addresses_deleted": 0,
@@ -535,7 +542,7 @@ async def delete_all_guests(event_id: UUID, db: Session = Depends(get_db)):
             "associations_deleted": 0
         }
     
-    invitee_ids = list(set([assoc.invitee_id for assoc in associations]))
+    invitee_ids = list(set([assoc.invitee_id for assoc in associations_for_events]))
     
     # Get all invitees
     invitees = db.query(WeddingInviteeDB).filter(
@@ -550,10 +557,17 @@ async def delete_all_guests(event_id: UUID, db: Session = Depends(get_db)):
         CommentDB.invitee_id.in_(invitee_ids)
     ).all()
     
+    # Get ALL associations for these invitees (across all events, including sub-events)
+    # This is necessary because invitees might be associated with multiple events
+    # We need to delete all associations to prevent foreign key violations
+    all_associations = db.query(EventInviteeAssociation).filter(
+        EventInviteeAssociation.invitee_id.in_(invitee_ids)
+    ).all()
+    
     # Get counts before deletion
     mailing_address_count = len(mailing_address_ids)
     invitee_count = len(invitees)
-    association_count = len(associations)
+    association_count = len(all_associations)
     comment_count = len(comments)
     
     # Use bulk delete operations to avoid relationship issues
@@ -563,10 +577,11 @@ async def delete_all_guests(event_id: UUID, db: Session = Depends(get_db)):
             CommentDB.invitee_id.in_(invitee_ids)
         ).delete(synchronize_session=False)
     
-    # Delete associations (due to foreign key constraints)
+    # Delete ALL associations for these invitees (across all events, including sub-events)
+    # This prevents foreign key violations when deleting invitees
     if association_count > 0:
         db.query(EventInviteeAssociation).filter(
-            EventInviteeAssociation.event_id == event_id
+            EventInviteeAssociation.invitee_id.in_(invitee_ids)
         ).delete(synchronize_session=False)
     
     # Delete invitees
