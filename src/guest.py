@@ -504,6 +504,98 @@ async def get_guest_rsvp_info(request: GuestRSVPInfoRequest, db: Session = Depen
     )
 
 
+@router.delete("/guest/all/{event_id}")
+async def delete_all_guests(event_id: UUID, db: Session = Depends(get_db)):
+    """
+    Delete all guests (invitees) associated with a specific event.
+    This deletes invitees, their event associations, comments, and mailing addresses for guests linked to the given event.
+    """
+    # Verify event exists
+    event = db.query(EventDB).filter(EventDB.id == event_id).first()
+    
+    if not event:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Event with id {event_id} not found"
+        )
+    
+    # Get all invitee IDs associated with this event
+    associations = db.query(EventInviteeAssociation).filter(
+        EventInviteeAssociation.event_id == event_id
+    ).all()
+    
+    if not associations:
+        return {
+            "message": f"No guests found for event {event_id}",
+            "event_id": str(event_id),
+            "event_name": event.name,
+            "mailing_addresses_deleted": 0,
+            "invitees_deleted": 0,
+            "comments_deleted": 0,
+            "associations_deleted": 0
+        }
+    
+    invitee_ids = list(set([assoc.invitee_id for assoc in associations]))
+    
+    # Get all invitees
+    invitees = db.query(WeddingInviteeDB).filter(
+        WeddingInviteeDB.id.in_(invitee_ids)
+    ).all()
+    
+    # Get all mailing address IDs
+    mailing_address_ids = list(set([inv.mailing_address_id for inv in invitees]))
+    
+    # Get all comments for these invitees
+    comments = db.query(CommentDB).filter(
+        CommentDB.invitee_id.in_(invitee_ids)
+    ).all()
+    
+    # Get counts before deletion
+    mailing_address_count = len(mailing_address_ids)
+    invitee_count = len(invitees)
+    association_count = len(associations)
+    comment_count = len(comments)
+    
+    # Delete comments first (due to foreign key constraints)
+    for comment in comments:
+        db.delete(comment)
+    
+    # Delete associations (due to foreign key constraints)
+    for assoc in associations:
+        db.delete(assoc)
+    
+    # Delete invitees
+    for invitee in invitees:
+        db.delete(invitee)
+    
+    # Delete mailing addresses (only if no other invitees reference them)
+    if mailing_address_ids:
+        for mailing_address_id in mailing_address_ids:
+            # Check if any other invitees reference this mailing address
+            remaining_invitees = db.query(WeddingInviteeDB).filter(
+                WeddingInviteeDB.mailing_address_id == mailing_address_id
+            ).count()
+            
+            if remaining_invitees == 0:
+                mailing_address = db.query(MailingAddressDB).filter(
+                    MailingAddressDB.id == mailing_address_id
+                ).first()
+                if mailing_address:
+                    db.delete(mailing_address)
+    
+    db.commit()
+    
+    return {
+        "message": f"Deleted all {invitee_count} guest(s) for event {event_id}: {mailing_address_count} mailing address(es), {comment_count} comment(s), and {association_count} association(s)",
+        "event_id": str(event_id),
+        "event_name": event.name,
+        "mailing_addresses_deleted": mailing_address_count,
+        "invitees_deleted": invitee_count,
+        "comments_deleted": comment_count,
+        "associations_deleted": association_count
+    }
+
+
 @router.delete("/guest/{guest_id}")
 async def delete_guest(guest_id: UUID, db: Session = Depends(get_db)):
     """
@@ -719,37 +811,4 @@ async def delete_guest_by_email(
     }
 
 
-@router.delete("/guest/all")
-async def delete_all_guests(db: Session = Depends(get_db)):
-    """
-    Delete all mailing addresses, invitees, their event associations, and comments.
-    This is a destructive operation that removes all guest data.
-    """
-    # Get counts before deletion
-    mailing_address_count = db.query(MailingAddressDB).count()
-    invitee_count = db.query(WeddingInviteeDB).count()
-    association_count = db.query(EventInviteeAssociation).count()
-    comment_count = db.query(CommentDB).count()
-    
-    # Delete all comments first (due to foreign key constraints)
-    db.query(CommentDB).delete()
-    
-    # Delete all associations (due to foreign key constraints)
-    db.query(EventInviteeAssociation).delete()
-    
-    # Delete all invitees
-    db.query(WeddingInviteeDB).delete()
-    
-    # Delete all mailing addresses
-    db.query(MailingAddressDB).delete()
-    
-    db.commit()
-    
-    return {
-        "message": f"Deleted all guest data: {mailing_address_count} mailing address(es), {invitee_count} invitee(s), {comment_count} comment(s), and {association_count} association(s)",
-        "mailing_addresses_deleted": mailing_address_count,
-        "invitees_deleted": invitee_count,
-        "comments_deleted": comment_count,
-        "associations_deleted": association_count
-    }
 
