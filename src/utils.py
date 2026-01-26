@@ -116,7 +116,7 @@ def send_confirmation_email(email: str, invitee_names: List[str], phone_number: 
             "https://api.mailgun.net/v3/carlosandelizabeth2026.com/messages",
             auth=("api", api_key),
             data={
-                "from": "no-reply@carlosandelizabeth2026.com",
+                "from": "Honourable.mention96@gmail.com",
                 "to": email,
                 "subject": "RSVP Confirmation - Carlos & Elizabeth's Wedding",
                 "template": "base template",
